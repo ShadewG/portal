@@ -2,30 +2,37 @@ import { auth } from "@/auth";
 import { prisma } from "@/lib/db";
 import { allApps } from "@/lib/apps";
 
-/** GET /api/me — return current user's access map */
+/** GET /api/me — upsert user + return access map */
 export async function GET() {
   const session = await auth();
-  const discordId = (session?.user as Record<string, unknown> | undefined)?.discordId as string | undefined;
+  const user = session?.user as Record<string, unknown> | undefined;
+  const discordId = user?.discordId as string | undefined;
 
   if (!discordId) {
     return Response.json({ error: "Not authenticated" }, { status: 401 });
   }
 
-  const user = await prisma.user.findUnique({
+  // Upsert user on every /api/me call (happens on dashboard load)
+  const username = (user?.username as string) ?? "unknown";
+  const avatar = (user?.avatar as string) ?? null;
+  const email = (user?.email as string) ?? null;
+  const isAdmin = discordId === process.env.ADMIN_DISCORD_ID;
+
+  const dbUser = await prisma.user.upsert({
     where: { discordId },
+    update: { username, avatar, email },
+    create: { discordId, username, avatar, email, isAdmin },
     include: { access: true },
   });
 
-  const isAdmin = user?.isAdmin ?? discordId === process.env.ADMIN_DISCORD_ID;
-
   const access: Record<string, boolean> = {};
   for (const app of allApps) {
-    if (isAdmin) {
+    if (dbUser.isAdmin) {
       access[app.id] = true;
     } else {
-      access[app.id] = user?.access.some((a) => a.appId === app.id && a.granted) ?? false;
+      access[app.id] = dbUser.access.some((a) => a.appId === app.id && a.granted);
     }
   }
 
-  return Response.json({ discordId, isAdmin, access });
+  return Response.json({ discordId, isAdmin: dbUser.isAdmin, access });
 }

@@ -1,6 +1,5 @@
 import NextAuth from "next-auth";
 import Discord from "next-auth/providers/discord";
-import { prisma } from "@/lib/db";
 
 export const { handlers, signIn, signOut, auth } = NextAuth({
   providers: [Discord],
@@ -8,31 +7,15 @@ export const { handlers, signIn, signOut, auth } = NextAuth({
     authorized({ auth: session }) {
       return !!session?.user;
     },
-    async jwt({ token, profile }) {
+    jwt({ token, profile }) {
       if (profile) {
         token.discordId = profile.id;
         token.avatar = profile.avatar;
         token.username = (profile as Record<string, unknown>).username;
         token.globalName = (profile as Record<string, unknown>).global_name;
-
-        // Upsert user on login
-        const discordId = profile.id as string;
-        const username = ((profile as Record<string, unknown>).username as string) ?? "unknown";
-        const avatar = (profile.avatar as string) ?? null;
-        const email = (profile.email as string) ?? null;
-        const isAdmin = discordId === process.env.ADMIN_DISCORD_ID;
-
-        try {
-          await prisma.user.upsert({
-            where: { discordId },
-            update: { username, avatar, email },
-            create: { discordId, username, avatar, email, isAdmin },
-          });
-        } catch {
-          // DB may not be ready yet — don't block login
-        }
-
-        token.isAdmin = isAdmin;
+        token.isAdmin = profile.id === process.env.ADMIN_DISCORD_ID;
+        // Flag for post-login upsert
+        token.needsSync = true;
       }
       return token;
     },
