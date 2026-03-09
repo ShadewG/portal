@@ -4,10 +4,19 @@ export interface AppConfig {
   description: string;
   url: string;
   handoffPath?: string;
+  requiresPortalAuth?: boolean;
+  allowedOrigins?: string[];
   icon: string;
   color: string;
   status: "live" | "dev" | "offline";
 }
+
+const localOrigins = [
+  "http://localhost:3000",
+  "http://127.0.0.1:3000",
+  "http://localhost:3001",
+  "http://127.0.0.1:3001",
+];
 
 export interface AppSection {
   id: string;
@@ -30,6 +39,7 @@ export const sections: AppSection[] = [
         description: "AI-powered true crime script review — legal risk, YouTube policy, and fact-checking.",
         url: "https://script-reviewer-production.up.railway.app",
         handoffPath: "/auth/portal",
+        allowedOrigins: ["https://script-reviewer-production.up.railway.app", ...localOrigins],
         icon: "🛡",
         color: "#ef4444",
         status: "live",
@@ -44,12 +54,12 @@ export const sections: AppSection[] = [
         status: "live",
       },
       {
-        id: "video-generation",
-        name: "Video Generation",
-        description: "AI video generation pipeline — Runway, Kling, and editing automation.",
+        id: "insanity-extension",
+        name: "Insanity Extension",
+        description: "Premium browser extension — enhanced production tools and workflow automation.",
         url: "https://insanity-extension-production.up.railway.app",
-        icon: "🎬",
-        color: "#ec4899",
+        icon: "⚡",
+        color: "#f59e0b",
         status: "live",
       },
     ],
@@ -66,6 +76,7 @@ export const sections: AppSection[] = [
         description: "Automated FOIA request generation, tracking, and document analysis.",
         url: "https://foia-researcher-production.up.railway.app",
         handoffPath: "/portal-auth",
+        allowedOrigins: ["https://foia-researcher-production.up.railway.app", ...localOrigins],
         icon: "📋",
         color: "#3b82f6",
         status: "live",
@@ -119,6 +130,7 @@ export const sections: AppSection[] = [
         name: "Invoicer",
         description: "Invoice generation, payment tracking, and financial records.",
         url: "https://www.matcher-invoicing.com",
+        requiresPortalAuth: false,
         icon: "🧾",
         color: "#a855f7",
         status: "live",
