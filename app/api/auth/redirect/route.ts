@@ -4,6 +4,17 @@ import { prisma } from "@/lib/db";
 import { getAppById } from "@/lib/apps";
 import { signAppToken } from "@/lib/jwt";
 
+function getPortalBaseUrl(req: NextRequest) {
+  const forwardedProto = req.headers.get("x-forwarded-proto");
+  const forwardedHost = req.headers.get("x-forwarded-host");
+
+  if (forwardedProto && forwardedHost) {
+    return `${forwardedProto}://${forwardedHost}`;
+  }
+
+  return process.env.AUTH_URL ?? req.nextUrl.origin;
+}
+
 function resolveReturnTo(appUrl: string, allowedOrigins: string[] | undefined, returnTo: string | null) {
   if (!returnTo) return null;
   try {
@@ -56,7 +67,7 @@ export async function GET(req: NextRequest) {
   const discordId = user?.discordId as string | undefined;
 
   if (!discordId) {
-    const loginUrl = new URL("/login", req.nextUrl);
+    const loginUrl = new URL("/login", getPortalBaseUrl(req));
     const callbackUrl = `${req.nextUrl.pathname}${req.nextUrl.search}`;
     loginUrl.searchParams.set("callbackUrl", callbackUrl);
     return Response.redirect(loginUrl.toString(), 302);
