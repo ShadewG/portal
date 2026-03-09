@@ -54,6 +54,15 @@ export const sections: AppSection[] = [
         status: "live",
       },
       {
+        id: "video-generation",
+        name: "Video Generation",
+        description: "AI video generation pipeline — Runway, Kling, and editing automation.",
+        url: "https://style-lab-production.up.railway.app",
+        icon: "🎬",
+        color: "#ec4899",
+        status: "live",
+      },
+      {
         id: "insanity-extension",
         name: "Insanity Extension",
         description: "Premium browser extension — enhanced production tools and workflow automation.",
