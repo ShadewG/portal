@@ -67,6 +67,8 @@ export const sections: AppSection[] = [
         name: "Insanity Extension",
         description: "Premium browser extension — enhanced production tools and workflow automation.",
         url: "https://insanity-extension-production.up.railway.app",
+        handoffPath: "/auth/portal",
+        allowedOrigins: ["https://insanity-extension-production.up.railway.app", ...localOrigins],
         icon: "⚡",
         color: "#f59e0b",
         status: "live",
