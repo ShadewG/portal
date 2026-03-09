@@ -15,12 +15,28 @@ interface UserRow {
   access: Record<string, boolean>;
 }
 
+interface PendingAccessRow {
+  id: string;
+  email: string;
+  appId: string;
+  granted: boolean;
+  grantedBy: string | null;
+  createdAt: string;
+}
+
 export default function AdminPage() {
   const { data: session } = useSession();
   const [users, setUsers] = useState<UserRow[]>([]);
+  const [pending, setPending] = useState<PendingAccessRow[]>([]);
+  const [pendingEmail, setPendingEmail] = useState("");
+  const [pendingAppId, setPendingAppId] = useState(allApps[0]?.id ?? "");
+  const [pendingGranted, setPendingGranted] = useState(true);
   const [loading, setLoading] = useState(true);
+  const [pendingLoading, setPendingLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [pendingError, setPendingError] = useState<string | null>(null);
   const [toggling, setToggling] = useState<string | null>(null);
+  const [pendingSubmitting, setPendingSubmitting] = useState(false);
 
   const isAdmin = (session?.user as Record<string, unknown> | undefined)?.isAdmin;
 
@@ -40,9 +56,28 @@ export default function AdminPage() {
     }
   }, []);
 
+  const loadPending = useCallback(async () => {
+    try {
+      const res = await fetch("/api/admin/pending-access");
+      if (res.status === 403) {
+        setPendingError("Access denied. Admin only.");
+        return;
+      }
+      if (!res.ok) throw new Error("Failed to load pending access");
+      setPending(await res.json());
+    } catch (err) {
+      setPendingError(err instanceof Error ? err.message : "Unknown error");
+    } finally {
+      setPendingLoading(false);
+    }
+  }, []);
+
   useEffect(() => {
-    if (session?.user) loadUsers();
-  }, [session, loadUsers]);
+    if (session?.user) {
+      loadUsers();
+      loadPending();
+    }
+  }, [session, loadUsers, loadPending]);
 
   const toggleAccess = async (userId: string, appId: string, currentlyGranted: boolean) => {
     const key = `${userId}:${appId}`;
@@ -62,6 +97,43 @@ export default function AdminPage() {
       }
     } finally {
       setToggling(null);
+    }
+  };
+
+  const submitPending = async () => {
+    if (!pendingEmail.trim() || !pendingAppId) return;
+    setPendingSubmitting(true);
+    try {
+      const res = await fetch("/api/admin/pending-access", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          email: pendingEmail.trim(),
+          appId: pendingAppId,
+          granted: pendingGranted,
+        }),
+      });
+      if (!res.ok) throw new Error("Failed to save pending access");
+      setPendingEmail("");
+      await loadPending();
+    } catch (err) {
+      setPendingError(err instanceof Error ? err.message : "Unknown error");
+    } finally {
+      setPendingSubmitting(false);
+    }
+  };
+
+  const removePending = async (email: string, appId: string) => {
+    try {
+      const res = await fetch("/api/admin/pending-access", {
+        method: "DELETE",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ email, appId }),
+      });
+      if (!res.ok) throw new Error("Failed to remove pending access");
+      await loadPending();
+    } catch (err) {
+      setPendingError(err instanceof Error ? err.message : "Unknown error");
     }
   };
 
@@ -106,6 +178,124 @@ export default function AdminPage() {
             {error}
           </div>
         )}
+
+        <div style={{ marginBottom: 32, padding: 16, border: "1px solid var(--border)", background: "var(--bg-surface)" }}>
+          <div style={{ fontSize: 10, fontWeight: 600, letterSpacing: "0.1em", textTransform: "uppercase", color: "var(--text-muted)", marginBottom: 12 }}>
+            Pre-Provisioned Access
+          </div>
+          {pendingError && (
+            <div style={{ padding: 10, border: "1px solid var(--red)", color: "var(--red)", marginBottom: 12, fontSize: 11 }}>
+              {pendingError}
+            </div>
+          )}
+          <div style={{ display: "flex", flexWrap: "wrap", gap: 8, marginBottom: 12 }}>
+            <input
+              value={pendingEmail}
+              onChange={(e) => setPendingEmail(e.target.value)}
+              placeholder="email@example.com"
+              style={{
+                flex: "1 1 220px",
+                padding: "8px 10px",
+                border: "1px solid var(--border)",
+                background: "transparent",
+                color: "var(--text)",
+                fontSize: 11,
+                fontFamily: "inherit",
+              }}
+            />
+            <select
+              value={pendingAppId}
+              onChange={(e) => setPendingAppId(e.target.value)}
+              style={{
+                flex: "0 0 200px",
+                padding: "8px 10px",
+                border: "1px solid var(--border)",
+                background: "transparent",
+                color: "var(--text)",
+                fontSize: 11,
+                fontFamily: "inherit",
+              }}
+            >
+              {allApps.map((app) => (
+                <option key={app.id} value={app.id}>
+                  {app.name}
+                </option>
+              ))}
+            </select>
+            <select
+              value={pendingGranted ? "grant" : "revoke"}
+              onChange={(e) => setPendingGranted(e.target.value === "grant")}
+              style={{
+                flex: "0 0 140px",
+                padding: "8px 10px",
+                border: "1px solid var(--border)",
+                background: "transparent",
+                color: "var(--text)",
+                fontSize: 11,
+                fontFamily: "inherit",
+              }}
+            >
+              <option value="grant">Grant</option>
+              <option value="revoke">Revoke</option>
+            </select>
+            <button
+              onClick={submitPending}
+              disabled={pendingSubmitting || pendingLoading}
+              style={{
+                padding: "8px 14px",
+                border: "1px solid var(--border)",
+                background: "transparent",
+                color: "var(--text)",
+                fontSize: 11,
+                fontFamily: "inherit",
+                cursor: "pointer",
+                opacity: pendingSubmitting || pendingLoading ? 0.6 : 1,
+              }}
+            >
+              Save
+            </button>
+          </div>
+          {pendingLoading ? (
+            <div style={{ color: "var(--text-dim)", fontSize: 11 }}>Loading pending access...</div>
+          ) : pending.length === 0 ? (
+            <div style={{ color: "var(--text-dim)", fontSize: 11 }}>No pending access entries.</div>
+          ) : (
+            <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+              {pending.map((row) => (
+                <div
+                  key={row.id}
+                  style={{
+                    display: "flex",
+                    alignItems: "center",
+                    justifyContent: "space-between",
+                    gap: 12,
+                    padding: "6px 8px",
+                    border: "1px solid var(--border)",
+                    fontSize: 11,
+                  }}
+                >
+                  <div style={{ color: "var(--text-dim)" }}>
+                    {row.email} · {row.appId} · {row.granted ? "granted" : "revoked"}
+                  </div>
+                  <button
+                    onClick={() => removePending(row.email, row.appId)}
+                    style={{
+                      border: "1px solid var(--border)",
+                      background: "transparent",
+                      color: "var(--text-dim)",
+                      fontSize: 10,
+                      padding: "4px 8px",
+                      fontFamily: "inherit",
+                      cursor: "pointer",
+                    }}
+                  >
+                    Remove
+                  </button>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
 
         {loading ? (
           <div style={{ color: "var(--text-dim)", fontSize: 12 }}>Loading users...</div>
@@ -154,7 +344,23 @@ export default function AdminPage() {
                       }}
                       title={app.name}
                     >
-                      {app.icon} {app.name}
+                      <div style={{ display: "flex", flexDirection: "column", gap: 2 }}>
+                        <span>
+                          {app.icon} {app.name}
+                        </span>
+                        {app.requiresPortalAuth === false && (
+                          <span
+                            style={{
+                              fontSize: 8,
+                              color: "var(--text-muted)",
+                              letterSpacing: "0.08em",
+                              textTransform: "uppercase",
+                            }}
+                          >
+                            Public
+                          </span>
+                        )}
+                      </div>
                     </th>
                   ))}
                 </tr>
@@ -230,6 +436,7 @@ export default function AdminPage() {
             <li>New users appear after their first Discord sign-in. Default access: <strong style={{ color: "var(--red)" }}>none</strong>.</li>
             <li>Click a cell to grant/revoke access to a specific tool.</li>
             <li>Admins (★) have access to all tools automatically.</li>
+            <li>Apps marked &quot;Public&quot; skip portal auth and access checks.</li>
             <li>Access is enforced on redirect — users without access see &quot;Locked&quot; cards.</li>
           </ul>
         </div>

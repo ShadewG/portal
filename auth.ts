@@ -3,7 +3,11 @@ import Discord from "next-auth/providers/discord";
 
 export const { handlers, signIn, signOut, auth } = NextAuth({
   providers: [Discord],
-  session: { strategy: "jwt", maxAge: 30 * 24 * 60 * 60 },
+  session: {
+    strategy: "jwt",
+    maxAge: 365 * 24 * 60 * 60,
+    updateAge: 7 * 24 * 60 * 60,
+  },
   trustHost: true,
   callbacks: {
     authorized({ auth: session }) {
