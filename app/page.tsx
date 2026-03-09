@@ -1,30 +1,43 @@
 "use client";
 
 import { useSession, signOut } from "next-auth/react";
-import { apps, type AppConfig } from "@/lib/apps";
-import { useState } from "react";
+import { sections, type AppConfig, type AppSection } from "@/lib/apps";
+import { useState, useEffect, useCallback } from "react";
+
+type AccessMap = Record<string, boolean>;
 
 function StatusDot({ status }: { status: AppConfig["status"] }) {
   return <span className={`status-dot status-${status}`} title={status} />;
 }
 
-function AppCard({ app, index }: { app: AppConfig; index: number }) {
+function AppCard({
+  app,
+  hasAccess,
+  index,
+}: {
+  app: AppConfig;
+  hasAccess: boolean;
+  index: number;
+}) {
+  const href = hasAccess ? `/api/auth/redirect?app=${app.id}` : undefined;
+  const Tag = hasAccess ? "a" : "div";
+
   return (
-    <a
-      href={app.url}
-      target="_blank"
-      rel="noopener noreferrer"
-      className="card-hover animate-fade-in"
+    <Tag
+      {...(hasAccess ? { href, target: "_blank", rel: "noopener noreferrer" } : {})}
+      className={`card-hover animate-fade-in ${!hasAccess ? "locked" : ""}`}
       style={{
         display: "block",
         border: "1px solid var(--border)",
-        background: "var(--bg-surface)",
-        padding: 24,
+        background: hasAccess ? "var(--bg-surface)" : "var(--bg)",
+        padding: 20,
         textDecoration: "none",
         color: "inherit",
-        animationDelay: `${index * 60}ms`,
+        animationDelay: `${index * 50}ms`,
         position: "relative",
         overflow: "hidden",
+        opacity: hasAccess ? 1 : 0.4,
+        cursor: hasAccess ? "pointer" : "not-allowed",
       }}
     >
       <div
@@ -35,102 +48,135 @@ function AppCard({ app, index }: { app: AppConfig; index: number }) {
           right: 0,
           height: 2,
           background: app.color,
-          opacity: 0.7,
+          opacity: hasAccess ? 0.7 : 0.2,
         }}
       />
-      <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", marginBottom: 12 }}>
-        <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-          <span style={{ fontSize: 24 }}>{app.icon}</span>
-          <div>
-            <div
-              style={{
-                fontSize: 13,
-                fontWeight: 700,
-                letterSpacing: "0.08em",
-                textTransform: "uppercase",
-              }}
-            >
-              {app.name}
-            </div>
-          </div>
-        </div>
-        <StatusDot status={app.status} />
-      </div>
-      <p
-        style={{
-          fontSize: 11,
-          color: "var(--text-dim)",
-          lineHeight: 1.6,
-          margin: "0 0 16px",
-        }}
-      >
-        {app.description}
-      </p>
-      <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
-        {app.tags.map((tag) => (
+      <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", marginBottom: 10 }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+          <span style={{ fontSize: 20 }}>{app.icon}</span>
           <span
-            key={tag}
             style={{
-              fontSize: 9,
-              fontWeight: 600,
-              letterSpacing: "0.1em",
+              fontSize: 12,
+              fontWeight: 700,
+              letterSpacing: "0.08em",
               textTransform: "uppercase",
-              padding: "3px 8px",
-              background: "var(--bg-elevated)",
-              border: "1px solid var(--border)",
-              color: "var(--text-dim)",
             }}
           >
-            {tag}
+            {app.name}
           </span>
+        </div>
+        <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+          {!hasAccess && (
+            <span style={{ fontSize: 9, color: "var(--text-muted)", letterSpacing: "0.1em", textTransform: "uppercase" }}>
+              Locked
+            </span>
+          )}
+          <StatusDot status={app.status} />
+        </div>
+      </div>
+      <p style={{ fontSize: 11, color: "var(--text-dim)", lineHeight: 1.5, margin: 0 }}>
+        {app.description}
+      </p>
+    </Tag>
+  );
+}
+
+function SectionBlock({
+  section,
+  access,
+  startIndex,
+}: {
+  section: AppSection;
+  access: AccessMap;
+  startIndex: number;
+}) {
+  return (
+    <div style={{ marginBottom: 40 }}>
+      <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 16 }}>
+        <div style={{ width: 3, height: 20, background: section.color }} />
+        <h2
+          style={{
+            fontSize: 12,
+            fontWeight: 700,
+            letterSpacing: "0.15em",
+            textTransform: "uppercase",
+            margin: 0,
+            color: "var(--text)",
+          }}
+        >
+          {section.name}
+        </h2>
+        <span style={{ fontSize: 10, color: "var(--text-muted)" }}>{section.description}</span>
+      </div>
+      <div
+        style={{
+          display: "grid",
+          gridTemplateColumns: "repeat(auto-fill, minmax(280px, 1fr))",
+          gap: 12,
+        }}
+      >
+        {section.apps.map((app, i) => (
+          <AppCard key={app.id} app={app} hasAccess={access[app.id] ?? false} index={startIndex + i} />
         ))}
       </div>
-    </a>
+    </div>
   );
 }
 
 export default function Dashboard() {
   const { data: session } = useSession();
-  const [filter, setFilter] = useState("");
+  const [access, setAccess] = useState<AccessMap>({});
+  const [isAdmin, setIsAdmin] = useState(false);
+  const [loaded, setLoaded] = useState(false);
 
   const user = session?.user as
-    | (typeof session & { user: { username?: string; globalName?: string; discordId?: string; avatar?: string } })["user"]
+    | { username?: string; globalName?: string; discordId?: string; avatar?: string; name?: string; isAdmin?: boolean }
     | undefined;
 
   const displayName = user?.globalName || user?.username || user?.name || "Operator";
-
   const avatarUrl =
     user?.discordId && user?.avatar
       ? `https://cdn.discordapp.com/avatars/${user.discordId}/${user.avatar}.png?size=64`
       : undefined;
 
-  const filtered = filter
-    ? apps.filter(
-        (a) =>
-          a.name.toLowerCase().includes(filter.toLowerCase()) ||
-          a.tags.some((t) => t.toLowerCase().includes(filter.toLowerCase()))
-      )
-    : apps;
+  const loadAccess = useCallback(async () => {
+    try {
+      const res = await fetch("/api/me");
+      if (res.ok) {
+        const data = await res.json();
+        setAccess(data.access ?? {});
+        setIsAdmin(data.isAdmin ?? false);
+      }
+    } catch {
+      // Silently handle — will show all locked
+    } finally {
+      setLoaded(true);
+    }
+  }, []);
 
-  const liveCount = apps.filter((a) => a.status === "live").length;
+  useEffect(() => {
+    if (session?.user) loadAccess();
+  }, [session, loadAccess]);
+
+  const accessibleCount = Object.values(access).filter(Boolean).length;
+  let idx = 0;
 
   return (
     <div style={{ minHeight: "100vh", background: "var(--bg)" }}>
-      {/* Header */}
       <header
         style={{
           borderBottom: "1px solid var(--border)",
-          padding: "16px 32px",
+          padding: "14px 28px",
           display: "flex",
           alignItems: "center",
           justifyContent: "space-between",
         }}
       >
         <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
-          <span style={{ fontSize: 20 }}>⌘</span>
+          <span style={{ fontSize: 18 }}>⌘</span>
           <h1
             style={{
-              fontSize: 13,
+              fontSize: 12,
               fontWeight: 700,
               letterSpacing: "0.15em",
               textTransform: "uppercase",
@@ -140,14 +186,33 @@ export default function Dashboard() {
             Command Center
           </h1>
         </div>
-        <div style={{ display: "flex", alignItems: "center", gap: 16 }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 14 }}>
+          {isAdmin && (
+            <a
+              href="/admin"
+              style={{
+                fontSize: 10,
+                fontWeight: 600,
+                letterSpacing: "0.1em",
+                textTransform: "uppercase",
+                padding: "5px 10px",
+                background: "transparent",
+                border: "1px solid var(--amber)",
+                color: "var(--amber)",
+                textDecoration: "none",
+                fontFamily: "inherit",
+              }}
+            >
+              Admin
+            </a>
+          )}
           <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
             {avatarUrl && (
               <img
                 src={avatarUrl}
                 alt=""
-                width={24}
-                height={24}
+                width={22}
+                height={22}
                 style={{ borderRadius: "50%", border: "1px solid var(--border)" }}
               />
             )}
@@ -160,21 +225,12 @@ export default function Dashboard() {
               fontWeight: 600,
               letterSpacing: "0.1em",
               textTransform: "uppercase",
-              padding: "6px 12px",
+              padding: "5px 10px",
               background: "transparent",
               border: "1px solid var(--border)",
               color: "var(--text-dim)",
               fontFamily: "inherit",
               cursor: "pointer",
-              transition: "all 0.15s",
-            }}
-            onMouseOver={(e) => {
-              e.currentTarget.style.borderColor = "var(--red)";
-              e.currentTarget.style.color = "var(--red)";
-            }}
-            onMouseOut={(e) => {
-              e.currentTarget.style.borderColor = "var(--border)";
-              e.currentTarget.style.color = "var(--text-dim)";
             }}
           >
             Sign Out
@@ -182,94 +238,60 @@ export default function Dashboard() {
         </div>
       </header>
 
-      {/* Main */}
-      <main style={{ maxWidth: 1100, margin: "0 auto", padding: "40px 32px" }}>
-        {/* Stats bar */}
+      <main style={{ maxWidth: 1000, margin: "0 auto", padding: "32px 28px" }}>
+        {/* Stats */}
         <div
           style={{
             display: "flex",
             alignItems: "center",
-            gap: 24,
+            gap: 20,
             marginBottom: 32,
-            padding: "16px 20px",
+            padding: "14px 18px",
             border: "1px solid var(--border)",
             background: "var(--bg-surface)",
           }}
         >
           <div>
-            <div style={{ fontSize: 9, fontWeight: 600, letterSpacing: "0.15em", textTransform: "uppercase", color: "var(--text-muted)", marginBottom: 4 }}>
-              Services
+            <div style={{ fontSize: 9, fontWeight: 600, letterSpacing: "0.15em", textTransform: "uppercase", color: "var(--text-muted)", marginBottom: 3 }}>
+              Sections
             </div>
-            <div style={{ fontSize: 20, fontWeight: 700 }}>{apps.length}</div>
+            <div style={{ fontSize: 18, fontWeight: 700 }}>{sections.length}</div>
           </div>
-          <div style={{ width: 1, height: 32, background: "var(--border)" }} />
+          <div style={{ width: 1, height: 28, background: "var(--border)" }} />
           <div>
-            <div style={{ fontSize: 9, fontWeight: 600, letterSpacing: "0.15em", textTransform: "uppercase", color: "var(--text-muted)", marginBottom: 4 }}>
-              Live
+            <div style={{ fontSize: 9, fontWeight: 600, letterSpacing: "0.15em", textTransform: "uppercase", color: "var(--text-muted)", marginBottom: 3 }}>
+              Your Access
             </div>
-            <div style={{ fontSize: 20, fontWeight: 700, color: "var(--green)" }}>{liveCount}</div>
+            <div style={{ fontSize: 18, fontWeight: 700, color: loaded ? "var(--green)" : "var(--text-dim)" }}>
+              {loaded ? accessibleCount : "..."}
+            </div>
           </div>
-          <div style={{ width: 1, height: 32, background: "var(--border)" }} />
+          <div style={{ width: 1, height: 28, background: "var(--border)" }} />
           <div>
-            <div style={{ fontSize: 9, fontWeight: 600, letterSpacing: "0.15em", textTransform: "uppercase", color: "var(--text-muted)", marginBottom: 4 }}>
-              Platform
+            <div style={{ fontSize: 9, fontWeight: 600, letterSpacing: "0.15em", textTransform: "uppercase", color: "var(--text-muted)", marginBottom: 3 }}>
+              Role
             </div>
-            <div style={{ fontSize: 12, fontWeight: 600, color: "var(--text-dim)" }}>Railway</div>
+            <div
+              style={{
+                fontSize: 11,
+                fontWeight: 600,
+                color: isAdmin ? "var(--amber)" : "var(--text-dim)",
+              }}
+            >
+              {loaded ? (isAdmin ? "Admin" : "Member") : "..."}
+            </div>
           </div>
-          <div style={{ flex: 1 }} />
-          <input
-            type="text"
-            placeholder="Filter services..."
-            value={filter}
-            onChange={(e) => setFilter(e.target.value)}
-            style={{
-              fontSize: 11,
-              fontFamily: "inherit",
-              padding: "8px 14px",
-              background: "var(--bg)",
-              border: "1px solid var(--border)",
-              color: "var(--text)",
-              width: 200,
-              outline: "none",
-            }}
-            onFocus={(e) => (e.currentTarget.style.borderColor = "var(--accent)")}
-            onBlur={(e) => (e.currentTarget.style.borderColor = "var(--border)")}
-          />
         </div>
 
-        {/* App grid */}
-        <div
-          style={{
-            display: "grid",
-            gridTemplateColumns: "repeat(auto-fill, minmax(300px, 1fr))",
-            gap: 16,
-          }}
-        >
-          {filtered.map((app, i) => (
-            <AppCard key={app.id} app={app} index={i} />
-          ))}
-        </div>
-
-        {filtered.length === 0 && (
-          <div style={{ textAlign: "center", padding: 48, color: "var(--text-muted)", fontSize: 12 }}>
-            No services match &quot;{filter}&quot;
-          </div>
-        )}
+        {/* Sections */}
+        {sections.map((section) => {
+          const start = idx;
+          idx += section.apps.length;
+          return (
+            <SectionBlock key={section.id} section={section} access={access} startIndex={start} />
+          );
+        })}
       </main>
-
-      {/* Footer */}
-      <footer
-        style={{
-          borderTop: "1px solid var(--border)",
-          padding: "16px 32px",
-          textAlign: "center",
-          fontSize: 10,
-          color: "var(--text-muted)",
-          letterSpacing: "0.05em",
-        }}
-      >
-        Deployed on Railway
-      </footer>
     </div>
   );
 }

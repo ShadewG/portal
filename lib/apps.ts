@@ -6,88 +6,126 @@ export interface AppConfig {
   icon: string;
   color: string;
   status: "live" | "dev" | "offline";
-  tags: string[];
 }
 
-export const apps: AppConfig[] = [
+export interface AppSection {
+  id: string;
+  name: string;
+  description: string;
+  color: string;
+  apps: AppConfig[];
+}
+
+export const sections: AppSection[] = [
   {
-    id: "script-reviewer",
-    name: "Script Shield",
-    description: "AI-powered true crime script review — legal risk, YouTube policy, and fact-checking pipeline.",
-    url: "https://script-reviewer-production.up.railway.app",
-    icon: "🛡",
+    id: "production",
+    name: "Production",
+    description: "Content production and review tools",
     color: "#ef4444",
-    status: "live",
-    tags: ["AI", "Legal", "YouTube"],
+    apps: [
+      {
+        id: "script-reviewer",
+        name: "Script Shield",
+        description: "AI-powered true crime script review — legal risk, YouTube policy, and fact-checking.",
+        url: "https://script-reviewer-production.up.railway.app",
+        icon: "🛡",
+        color: "#ef4444",
+        status: "live",
+      },
+      {
+        id: "insanity-bot",
+        name: "Insanity Bot",
+        description: "Discord production bot — scheduling, task management, and workflow automation.",
+        url: "https://discord-scheduler-production.up.railway.app",
+        icon: "🤖",
+        color: "#5865f2",
+        status: "live",
+      },
+      {
+        id: "video-generation",
+        name: "Video Generation",
+        description: "AI video generation pipeline — Runway, Kling, and editing automation.",
+        url: "https://insanity-extension-production.up.railway.app",
+        icon: "🎬",
+        color: "#ec4899",
+        status: "live",
+      },
+    ],
   },
   {
-    id: "foia-researcher",
-    name: "FOIA Researcher",
-    description: "Automated FOIA request generation, tracking, and document analysis.",
-    url: "https://foia-researcher-production.up.railway.app",
-    icon: "📋",
+    id: "foia",
+    name: "FOIA",
+    description: "Freedom of Information Act tools and automation",
     color: "#3b82f6",
-    status: "live",
-    tags: ["FOIA", "Research", "Docs"],
+    apps: [
+      {
+        id: "foia-researcher",
+        name: "FOIA Researcher",
+        description: "Automated FOIA request generation, tracking, and document analysis.",
+        url: "https://foia-researcher-production.up.railway.app",
+        icon: "📋",
+        color: "#3b82f6",
+        status: "live",
+      },
+      {
+        id: "foia-bot",
+        name: "FOIA Bot",
+        description: "Autonomous FOIA filing, follow-up, and status monitoring agent.",
+        url: "https://foia-agent-production-bdd5.up.railway.app",
+        icon: "📡",
+        color: "#f59e0b",
+        status: "live",
+      },
+      {
+        id: "autobot",
+        name: "Autobot",
+        description: "Automated FOIA processing, document sorting, and case management.",
+        url: "https://sincere-strength-production.up.railway.app",
+        icon: "⚙",
+        color: "#22c55e",
+        status: "live",
+      },
+      {
+        id: "police-report-analyzer",
+        name: "Police Report Analyzer",
+        description: "AI analysis of police reports — entity extraction, timeline reconstruction, and red flag detection.",
+        url: "https://scintillating-imagination-production.up.railway.app",
+        icon: "🔍",
+        color: "#8b5cf6",
+        status: "live",
+      },
+      {
+        id: "case-explorer",
+        name: "Case Explorer",
+        description: "Browse and explore FOIA case files, documents, and frame evidence.",
+        url: "https://frame-browser-production.up.railway.app",
+        icon: "🗂",
+        color: "#06b6d4",
+        status: "live",
+      },
+    ],
   },
   {
-    id: "finance-app",
-    name: "Finance Dashboard",
-    description: "Financial tracking, invoicing, and revenue analytics.",
-    url: "https://finance-app-production.up.railway.app",
-    icon: "💰",
-    color: "#22c55e",
-    status: "live",
-    tags: ["Finance", "Analytics"],
-  },
-  {
-    id: "invoicing",
-    name: "Invoicer",
-    description: "Invoice generation and payment tracking.",
-    url: "https://invoicing-production.up.railway.app",
-    icon: "🧾",
+    id: "hr",
+    name: "HR",
+    description: "Human resources and administrative tools",
     color: "#a855f7",
-    status: "live",
-    tags: ["Finance", "Invoicing"],
-  },
-  {
-    id: "discord-bot",
-    name: "Discord Bot",
-    description: "Discord scheduling and automation bot.",
-    url: "https://discord.com/channels/@me",
-    icon: "🤖",
-    color: "#5865f2",
-    status: "live",
-    tags: ["Discord", "Bot"],
-  },
-  {
-    id: "foia-agent",
-    name: "FOIA Bot",
-    description: "Autonomous FOIA filing and follow-up agent.",
-    url: "https://foia-agent-production.up.railway.app",
-    icon: "📡",
-    color: "#f59e0b",
-    status: "live",
-    tags: ["FOIA", "Agent", "AI"],
-  },
-  {
-    id: "moon-bot",
-    name: "Moon Bot",
-    description: "Automated moon tracking and notifications.",
-    url: "https://moon-bot-production.up.railway.app",
-    icon: "🌙",
-    color: "#6366f1",
-    status: "live",
-    tags: ["Bot", "Automation"],
-  },
-  {
-    id: "youtube-megaphone",
-    name: "YT → Megaphone",
-    description: "YouTube to Megaphone podcast uploader pipeline.",
-    url: "https://youtube-to-megaphone-production.up.railway.app",
-    icon: "🎙",
-    color: "#ec4899",
-    status: "live",
-    tags: ["YouTube", "Podcast"],
+    apps: [
+      {
+        id: "invoicing",
+        name: "Invoicer",
+        description: "Invoice generation, payment tracking, and financial records.",
+        url: "https://www.matcher-invoicing.com",
+        icon: "🧾",
+        color: "#a855f7",
+        status: "live",
+      },
+    ],
   },
 ];
+
+export const allApps = sections.flatMap((s) => s.apps);
+
+export function getAppById(id: string): AppConfig | undefined {
+  return allApps.find((a) => a.id === id);
+}
