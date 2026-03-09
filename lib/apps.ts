@@ -3,6 +3,7 @@ export interface AppConfig {
   name: string;
   description: string;
   url: string;
+  handoffPath?: string;
   icon: string;
   color: string;
   status: "live" | "dev" | "offline";
@@ -28,6 +29,7 @@ export const sections: AppSection[] = [
         name: "Script Shield",
         description: "AI-powered true crime script review — legal risk, YouTube policy, and fact-checking.",
         url: "https://script-reviewer-production.up.railway.app",
+        handoffPath: "/auth/portal",
         icon: "🛡",
         color: "#ef4444",
         status: "live",
@@ -63,6 +65,7 @@ export const sections: AppSection[] = [
         name: "FOIA Researcher",
         description: "Automated FOIA request generation, tracking, and document analysis.",
         url: "https://foia-researcher-production.up.railway.app",
+        handoffPath: "/portal-auth",
         icon: "📋",
         color: "#3b82f6",
         status: "live",

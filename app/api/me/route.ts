@@ -25,12 +25,38 @@ export async function GET() {
     include: { access: true },
   });
 
+  if (dbUser.email) {
+    const pending = await prisma.pendingAppAccess.findMany({
+      where: { email: dbUser.email, granted: true, resolvedAt: null },
+    });
+
+    if (pending.length > 0) {
+      await prisma.$transaction([
+        ...pending.map((row) =>
+          prisma.appAccess.upsert({
+            where: { userId_appId: { userId: dbUser.id, appId: row.appId } },
+            update: { granted: true },
+            create: { userId: dbUser.id, appId: row.appId, granted: true },
+          })
+        ),
+        prisma.pendingAppAccess.updateMany({
+          where: { id: { in: pending.map((row) => row.id) } },
+          data: { resolvedAt: new Date(), resolvedUserId: dbUser.id },
+        }),
+      ]);
+    }
+  }
+
+  const accessRows = await prisma.appAccess.findMany({
+    where: { userId: dbUser.id, granted: true },
+  });
+
   const access: Record<string, boolean> = {};
   for (const app of allApps) {
     if (dbUser.isAdmin) {
       access[app.id] = true;
     } else {
-      access[app.id] = dbUser.access.some((a) => a.appId === app.id && a.granted);
+      access[app.id] = accessRows.some((a) => a.appId === app.id);
     }
   }
 

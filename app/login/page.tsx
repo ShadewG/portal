@@ -1,8 +1,12 @@
 "use client";
 
 import { signIn } from "next-auth/react";
+import { useSearchParams } from "next/navigation";
 
 export default function LoginPage() {
+  const searchParams = useSearchParams();
+  const callbackUrl = searchParams.get("callbackUrl") ?? "/";
+
   return (
     <div
       style={{
@@ -47,7 +51,7 @@ export default function LoginPage() {
           Authenticate to continue
         </p>
         <button
-          onClick={() => signIn("discord", { callbackUrl: "/" })}
+          onClick={() => signIn("discord", { callbackUrl })}
           style={{
             display: "flex",
             alignItems: "center",

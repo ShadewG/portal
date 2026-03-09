@@ -3,6 +3,8 @@ import Discord from "next-auth/providers/discord";
 
 export const { handlers, signIn, signOut, auth } = NextAuth({
   providers: [Discord],
+  session: { strategy: "jwt", maxAge: 30 * 24 * 60 * 60 },
+  trustHost: true,
   callbacks: {
     authorized({ auth: session }) {
       return !!session?.user;

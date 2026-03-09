@@ -12,7 +12,10 @@ export async function GET(req: NextRequest) {
   const discordId = user?.discordId as string | undefined;
 
   if (!discordId) {
-    return Response.json({ error: "Not authenticated" }, { status: 401 });
+    const loginUrl = new URL("/login", req.nextUrl);
+    const callbackUrl = `${req.nextUrl.pathname}${req.nextUrl.search}`;
+    loginUrl.searchParams.set("callbackUrl", callbackUrl);
+    return Response.redirect(loginUrl.toString(), 302);
   }
 
   const appId = req.nextUrl.searchParams.get("app");
@@ -42,14 +45,21 @@ export async function GET(req: NextRequest) {
   }
 
   const token = signAppToken({
+    portalUserId: dbUser!.id,
     discordId,
     email: user?.email as string | undefined,
     username: user?.username as string | undefined,
+    avatar: user?.avatar as string | undefined,
+    isAdmin,
     appId,
+    appUserId: undefined,
   });
 
   // Redirect to target app with token
   const targetUrl = new URL(app.url);
+  if (app.handoffPath) {
+    targetUrl.pathname = app.handoffPath;
+  }
   targetUrl.searchParams.set("portal_token", token);
 
   return Response.redirect(targetUrl.toString(), 302);

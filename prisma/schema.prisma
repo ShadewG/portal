@@ -16,6 +16,7 @@ model User {
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
   access    AppAccess[]
+  appLinks  AppUserLink[]
 }
 
 model AppAccess {
@@ -28,4 +29,33 @@ model AppAccess {
   user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   @@unique([userId, appId])
+}
+
+model AppUserLink {
+  id               String   @id @default(cuid())
+  userId           String
+  appId            String
+  externalUserId   String
+  externalUsername String?
+  externalEmail    String?
+  linkedBy         String?
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
+  user             User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, appId])
+}
+
+model PendingAppAccess {
+  id             String   @id @default(cuid())
+  email          String
+  appId          String
+  granted        Boolean  @default(true)
+  grantedBy      String?
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+  resolvedAt     DateTime?
+  resolvedUserId String?
+
+  @@unique([email, appId])
 }
