@@ -4,6 +4,7 @@ import { useSession, signOut } from "next-auth/react";
 import {
   sections,
   appRequiresPortalAuth,
+  getAppBugReportUrl,
   getAppEnvironment,
   getAppHostname,
   type AppConfig,
@@ -17,6 +18,14 @@ function StatusDot({ status }: { status: AppConfig["status"] }) {
   return <span className={`status-dot status-${status}`} title={status} />;
 }
 
+function buildAppRedirectHref(app: AppConfig, returnTo?: string) {
+  const params = new URLSearchParams({ app: app.id });
+  if (returnTo) {
+    params.set("returnTo", returnTo);
+  }
+  return `/api/auth/redirect?${params.toString()}`;
+}
+
 function AppCard({
   app,
   hasAccess,
@@ -26,28 +35,25 @@ function AppCard({
   hasAccess: boolean;
   index: number;
 }) {
-  const href = hasAccess ? `/api/auth/redirect?app=${app.id}` : undefined;
-  const Tag = hasAccess ? "a" : "div";
+  const openHref = hasAccess ? buildAppRedirectHref(app) : undefined;
+  const bugReportHref = hasAccess ? buildAppRedirectHref(app, getAppBugReportUrl(app)) : undefined;
   const environment = getAppEnvironment(app);
   const authMode = appRequiresPortalAuth(app) ? "portal handoff" : "public";
   const hostname = getAppHostname(app);
 
   return (
-    <Tag
-      {...(hasAccess ? { href, target: "_blank", rel: "noopener noreferrer" } : {})}
+    <div
       className={`card-hover animate-fade-in ${!hasAccess ? "locked" : ""}`}
       style={{
-        display: "block",
         border: "1px solid var(--border)",
         background: hasAccess ? "var(--bg-surface)" : "var(--bg)",
         padding: 20,
-        textDecoration: "none",
         color: "inherit",
         animationDelay: `${index * 50}ms`,
         position: "relative",
         overflow: "hidden",
         opacity: hasAccess ? 1 : 0.4,
-        cursor: hasAccess ? "pointer" : "not-allowed",
+        cursor: hasAccess ? "default" : "not-allowed",
       }}
     >
       <div
@@ -98,7 +104,81 @@ function AppCard({
       <div style={{ marginTop: 8, fontSize: 10, color: "var(--text-muted)", fontFamily: "monospace", wordBreak: "break-all" }}>
         {hostname}
       </div>
-    </Tag>
+      <div style={{ display: "flex", gap: 8, marginTop: 14 }}>
+        {openHref ? (
+          <a
+            href={openHref}
+            style={{
+              flex: 1,
+              textAlign: "center",
+              padding: "8px 10px",
+              border: "1px solid var(--border)",
+              textDecoration: "none",
+              color: "var(--text)",
+              fontSize: 10,
+              fontWeight: 700,
+              letterSpacing: "0.08em",
+              textTransform: "uppercase",
+              background: "transparent",
+            }}
+          >
+            Open
+          </a>
+        ) : (
+          <div
+            style={{
+              flex: 1,
+              textAlign: "center",
+              padding: "8px 10px",
+              border: "1px solid var(--border)",
+              color: "var(--text-muted)",
+              fontSize: 10,
+              fontWeight: 700,
+              letterSpacing: "0.08em",
+              textTransform: "uppercase",
+            }}
+          >
+            Locked
+          </div>
+        )}
+        {bugReportHref ? (
+          <a
+            href={bugReportHref}
+            style={{
+              flex: 1,
+              textAlign: "center",
+              padding: "8px 10px",
+              border: "1px solid var(--amber)",
+              textDecoration: "none",
+              color: "var(--amber)",
+              fontSize: 10,
+              fontWeight: 700,
+              letterSpacing: "0.08em",
+              textTransform: "uppercase",
+              background: "rgba(245, 158, 11, 0.08)",
+            }}
+          >
+            Bug Report
+          </a>
+        ) : (
+          <div
+            style={{
+              flex: 1,
+              textAlign: "center",
+              padding: "8px 10px",
+              border: "1px solid var(--border)",
+              color: "var(--text-muted)",
+              fontSize: 10,
+              fontWeight: 700,
+              letterSpacing: "0.08em",
+              textTransform: "uppercase",
+            }}
+          >
+            Bug Report
+          </div>
+        )}
+      </div>
+    </div>
   );
 }
 
