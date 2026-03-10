@@ -29,11 +29,13 @@ function resolveReturnTo(appUrl: string, allowedOrigins: string[] | undefined, r
 
 function buildTargetUrl(baseUrl: string, handoffPath: string | undefined, next: string | null) {
   const targetUrl = new URL(baseUrl);
+  const preservedNext = next ?? (handoffPath && targetUrl.pathname && targetUrl.pathname !== '/' ? `${targetUrl.pathname}${targetUrl.search}` : null);
   if (handoffPath) {
     targetUrl.pathname = handoffPath;
+    targetUrl.search = '';
   }
-  if (next) {
-    targetUrl.searchParams.set("next", next);
+  if (preservedNext) {
+    targetUrl.searchParams.set("next", preservedNext);
   }
   return targetUrl;
 }
