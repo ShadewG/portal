@@ -178,3 +178,26 @@ export const allApps = sections.flatMap((s) => s.apps);
 export function getAppById(id: string): AppConfig | undefined {
   return allApps.find((a) => a.id === id);
 }
+
+export function appRequiresPortalAuth(app: AppConfig): boolean {
+  return app.requiresPortalAuth !== false;
+}
+
+export function getAppHostname(app: AppConfig): string {
+  try {
+    return new URL(app.url).hostname;
+  } catch {
+    return app.url;
+  }
+}
+
+export function getAppEnvironment(app: AppConfig): "production" | "staging" | "development" {
+  const hostname = getAppHostname(app).toLowerCase();
+  if (hostname.includes("localhost") || hostname.includes("127.0.0.1")) {
+    return "development";
+  }
+  if (hostname.includes("staging")) {
+    return "staging";
+  }
+  return "production";
+}

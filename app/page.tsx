@@ -1,7 +1,14 @@
 "use client";
 
 import { useSession, signOut } from "next-auth/react";
-import { sections, type AppConfig, type AppSection } from "@/lib/apps";
+import {
+  sections,
+  appRequiresPortalAuth,
+  getAppEnvironment,
+  getAppHostname,
+  type AppConfig,
+  type AppSection,
+} from "@/lib/apps";
 import { useState, useEffect, useCallback } from "react";
 
 type AccessMap = Record<string, boolean>;
@@ -21,6 +28,9 @@ function AppCard({
 }) {
   const href = hasAccess ? `/api/auth/redirect?app=${app.id}` : undefined;
   const Tag = hasAccess ? "a" : "div";
+  const environment = getAppEnvironment(app);
+  const authMode = appRequiresPortalAuth(app) ? "portal handoff" : "public";
+  const hostname = getAppHostname(app);
 
   return (
     <Tag
@@ -77,6 +87,17 @@ function AppCard({
       <p style={{ fontSize: 11, color: "var(--text-dim)", lineHeight: 1.5, margin: 0 }}>
         {app.description}
       </p>
+      <div style={{ display: "flex", flexWrap: "wrap", gap: 6, marginTop: 12 }}>
+        <span style={{ fontSize: 9, color: environment === "production" ? "var(--green)" : "var(--amber)", letterSpacing: "0.08em", textTransform: "uppercase" }}>
+          {environment}
+        </span>
+        <span style={{ fontSize: 9, color: "var(--text-muted)", letterSpacing: "0.08em", textTransform: "uppercase" }}>
+          {authMode}
+        </span>
+      </div>
+      <div style={{ marginTop: 8, fontSize: 10, color: "var(--text-muted)", fontFamily: "monospace", wordBreak: "break-all" }}>
+        {hostname}
+      </div>
     </Tag>
   );
 }
@@ -187,6 +208,25 @@ export default function Dashboard() {
           </h1>
         </div>
         <div style={{ display: "flex", alignItems: "center", gap: 14 }}>
+          {isAdmin && (
+            <a
+              href="/status"
+              style={{
+                fontSize: 10,
+                fontWeight: 600,
+                letterSpacing: "0.1em",
+                textTransform: "uppercase",
+                padding: "5px 10px",
+                background: "transparent",
+                border: "1px solid var(--border)",
+                color: "var(--text-dim)",
+                textDecoration: "none",
+                fontFamily: "inherit",
+              }}
+            >
+              Status
+            </a>
+          )}
           {isAdmin && (
             <a
               href="/admin"
