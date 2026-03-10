@@ -145,6 +145,8 @@ export const sections: AppSection[] = [
         name: "Case Explorer",
         description: "Browse and explore FOIA case files, documents, and frame evidence.",
         url: "https://frame-browser-production.up.railway.app",
+        handoffPath: "/api/auth/portal",
+        allowedOrigins: ["https://frame-browser-production.up.railway.app", ...localOrigins],
         icon: "🗂",
         color: "#06b6d4",
         status: "live",
