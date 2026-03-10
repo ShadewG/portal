@@ -4,7 +4,6 @@ import { useSession, signOut } from "next-auth/react";
 import {
   sections,
   appRequiresPortalAuth,
-  getAppBugReportUrl,
   getAppEnvironment,
   getAppHostname,
   type AppConfig,
@@ -36,7 +35,6 @@ function AppCard({
   index: number;
 }) {
   const openHref = hasAccess ? buildAppRedirectHref(app) : undefined;
-  const bugReportHref = hasAccess ? buildAppRedirectHref(app, getAppBugReportUrl(app)) : undefined;
   const environment = getAppEnvironment(app);
   const authMode = appRequiresPortalAuth(app) ? "portal handoff" : "public";
   const hostname = getAppHostname(app);
@@ -139,42 +137,6 @@ function AppCard({
             }}
           >
             Locked
-          </div>
-        )}
-        {bugReportHref ? (
-          <a
-            href={bugReportHref}
-            style={{
-              flex: 1,
-              textAlign: "center",
-              padding: "8px 10px",
-              border: "1px solid var(--amber)",
-              textDecoration: "none",
-              color: "var(--amber)",
-              fontSize: 10,
-              fontWeight: 700,
-              letterSpacing: "0.08em",
-              textTransform: "uppercase",
-              background: "rgba(245, 158, 11, 0.08)",
-            }}
-          >
-            Bug Report
-          </a>
-        ) : (
-          <div
-            style={{
-              flex: 1,
-              textAlign: "center",
-              padding: "8px 10px",
-              border: "1px solid var(--border)",
-              color: "var(--text-muted)",
-              fontSize: 10,
-              fontWeight: 700,
-              letterSpacing: "0.08em",
-              textTransform: "uppercase",
-            }}
-          >
-            Bug Report
           </div>
         )}
       </div>
