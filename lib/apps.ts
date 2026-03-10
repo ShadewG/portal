@@ -3,6 +3,7 @@ export interface AppConfig {
   name: string;
   description: string;
   url: string;
+  bugReportUrl?: string;
   handoffPath?: string;
   requiresPortalAuth?: boolean;
   allowedOrigins?: string[];
@@ -90,8 +91,7 @@ export const sections: AppSection[] = [
         name: "FOIA Researcher",
         description: "Automated FOIA request generation, tracking, and document analysis.",
         url: "https://frontend-app-staging-6be2.up.railway.app",
-        handoffPath: "/portal-auth",
-        allowedOrigins: ["https://frontend-app-staging-6be2.up.railway.app", ...localOrigins],
+        requiresPortalAuth: false,
         icon: "📋",
         color: "#3b82f6",
         status: "live",
@@ -134,8 +134,7 @@ export const sections: AppSection[] = [
         name: "PD Lookup",
         description: "Police department contact lookup — find department info, FOIA contacts, and submission details.",
         url: "https://scintillating-imagination-production.up.railway.app/pd-contact",
-        handoffPath: "/portal-auth",
-        allowedOrigins: ["https://scintillating-imagination-production.up.railway.app", ...localOrigins],
+        requiresPortalAuth: false,
         icon: "🚔",
         color: "#0ea5e9",
         status: "live",
@@ -200,4 +199,8 @@ export function getAppEnvironment(app: AppConfig): "production" | "staging" | "d
     return "staging";
   }
   return "production";
+}
+
+export function getAppBugReportUrl(app: AppConfig): string {
+  return app.bugReportUrl ?? app.url;
 }
