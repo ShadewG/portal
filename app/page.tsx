@@ -209,9 +209,11 @@ export default function Dashboard() {
         const data = await res.json();
         setAccess(data.access ?? {});
         setIsAdmin(data.isAdmin ?? false);
+      } else {
+        console.error("[portal] /api/me failed:", res.status, await res.text().catch(() => ""));
       }
-    } catch {
-      // Silently handle — will show all locked
+    } catch (err) {
+      console.error("[portal] /api/me error:", err);
     } finally {
       setLoaded(true);
     }

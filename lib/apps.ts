@@ -137,9 +137,9 @@ export const sections: AppSection[] = [
       },
       {
         id: "pd-lookup",
-        name: "PD Lookup",
-        description: "Police department contact lookup — find department info, FOIA contacts, and submission details.",
-        url: "https://foia-researcher.insanity.team/pd-contact",
+        name: "Departments",
+        description: "Browse 3,000+ police departments — search contacts, FOIA info, linked cases, and run new lookups.",
+        url: "https://foia-researcher.insanity.team/console/departments",
         requiresPortalAuth: false,
         icon: "🚔",
         color: "#0ea5e9",
