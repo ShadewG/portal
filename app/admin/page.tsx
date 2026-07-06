@@ -37,14 +37,27 @@ export default function AdminPage() {
   const [pendingError, setPendingError] = useState<string | null>(null);
   const [toggling, setToggling] = useState<string | null>(null);
   const [pendingSubmitting, setPendingSubmitting] = useState(false);
+  const [isAdmin, setIsAdmin] = useState<boolean | null>(null);
 
-  const isAdmin = (session?.user as Record<string, unknown> | undefined)?.isAdmin;
+  const loadAdminStatus = useCallback(async () => {
+    try {
+      const res = await fetch("/api/me");
+      if (!res.ok) throw new Error("Failed to load current user");
+      const data = await res.json();
+      setIsAdmin(Boolean(data?.isAdmin));
+      return Boolean(data?.isAdmin);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Unknown error");
+      setIsAdmin(false);
+      return false;
+    }
+  }, []);
 
   const loadUsers = useCallback(async () => {
     try {
       const res = await fetch("/api/admin");
       if (res.status === 403) {
-        setError("Access denied. Admin only.");
+        setError("Access denied by /api/admin.");
         return;
       }
       if (!res.ok) throw new Error("Failed to load users");
@@ -73,11 +86,19 @@ export default function AdminPage() {
   }, []);
 
   useEffect(() => {
-    if (session?.user) {
+    if (!session?.user) return;
+
+    (async () => {
+      const admin = await loadAdminStatus();
+      if (!admin) {
+        setLoading(false);
+        setPendingLoading(false);
+        return;
+      }
       loadUsers();
       loadPending();
-    }
-  }, [session, loadUsers, loadPending]);
+    })();
+  }, [session, loadAdminStatus, loadUsers, loadPending]);
 
   const toggleAccess = async (userId: string, appId: string, currentlyGranted: boolean) => {
     const key = `${userId}:${appId}`;
@@ -136,6 +157,14 @@ export default function AdminPage() {
       setPendingError(err instanceof Error ? err.message : "Unknown error");
     }
   };
+
+  if (!session?.user || isAdmin === null) {
+    return (
+      <div style={{ minHeight: "100vh", background: "var(--bg)", display: "flex", alignItems: "center", justifyContent: "center" }}>
+        <div style={{ color: "var(--text-dim)", fontSize: 13 }}>Loading admin access…</div>
+      </div>
+    );
+  }
 
   if (!isAdmin) {
     return (

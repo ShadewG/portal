@@ -3,6 +3,8 @@ import { auth } from "@/auth";
 import { prisma } from "@/lib/db";
 import { getAppById } from "@/lib/apps";
 import { signAppToken } from "@/lib/jwt";
+import { FRONTWIND_DUBBING_APP_ID, isFrontwindDubbingAllowed } from "@/lib/frontwindAccess";
+import { CASES_DASHBOARD_APP_ID, isCasesDashboardAllowed } from "@/lib/casesAccess";
 
 function getPortalBaseUrl(req: NextRequest) {
   const forwardedProto = req.headers.get("x-forwarded-proto");
@@ -113,7 +115,11 @@ export async function GET(req: NextRequest) {
   });
 
   const isAdmin = dbUser.isAdmin || envAdmin;
-  const hasAccess = isAdmin || accessRows.length > 0;
+  const hasAccess = appId === CASES_DASHBOARD_APP_ID
+    ? isCasesDashboardAllowed(user)
+    : appId === FRONTWIND_DUBBING_APP_ID
+      ? accessRows.length > 0 && isFrontwindDubbingAllowed(user)
+      : isAdmin || accessRows.length > 0;
 
   if (!hasAccess) {
     return new Response("Access denied. Contact an admin to request access.", {

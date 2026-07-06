@@ -1,6 +1,8 @@
 import { auth } from "@/auth";
 import { prisma } from "@/lib/db";
 import { allApps } from "@/lib/apps";
+import { FRONTWIND_DUBBING_APP_ID, isFrontwindDubbingAllowed } from "@/lib/frontwindAccess";
+import { CASES_DASHBOARD_APP_ID, isCasesDashboardAllowed } from "@/lib/casesAccess";
 
 /** GET /api/me — upsert user + return access map */
 export async function GET() {
@@ -17,12 +19,17 @@ export async function GET() {
     const username = (user?.username as string) ?? "unknown";
     const avatar = (user?.avatar as string) ?? null;
     const email = (user?.email as string) ?? null;
-    const isAdmin = discordId === process.env.ADMIN_DISCORD_ID;
+    const envAdmin = discordId === process.env.ADMIN_DISCORD_ID;
 
     const dbUser = await prisma.user.upsert({
       where: { discordId },
-      update: { username, avatar, email },
-      create: { discordId, username, avatar, email, isAdmin },
+      update: {
+        username,
+        avatar,
+        email,
+        ...(envAdmin ? { isAdmin: true } : {}),
+      },
+      create: { discordId, username, avatar, email, isAdmin: envAdmin },
       include: { access: true },
     });
 
@@ -54,10 +61,15 @@ export async function GET() {
 
     const access: Record<string, boolean> = {};
     for (const app of allApps) {
-      if (dbUser.isAdmin) {
+      const hasAppAccess = accessRows.some((a) => a.appId === app.id);
+      if (app.id === CASES_DASHBOARD_APP_ID) {
+        access[app.id] = isCasesDashboardAllowed(user);
+      } else if (app.id === FRONTWIND_DUBBING_APP_ID) {
+        access[app.id] = hasAppAccess && isFrontwindDubbingAllowed(user);
+      } else if (dbUser.isAdmin) {
         access[app.id] = true;
       } else {
-        access[app.id] = accessRows.some((a) => a.appId === app.id);
+        access[app.id] = hasAppAccess;
       }
     }
 
