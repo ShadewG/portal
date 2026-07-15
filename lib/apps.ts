@@ -175,7 +175,12 @@ export const sections: AppSection[] = [
         description: "Strategic case profiles — overview, people, media, timeline, and storyboard for every FOIA case.",
         url: "https://foiasorter.insanity.team/app/",
         handoffPath: "/api/auth/portal",
-        allowedOrigins: ["https://foiasorter.insanity.team", ...localOrigins, ...insanityOrigins],
+        allowedOrigins: [
+          "https://foiasorter.insanity.team",
+          "https://foia-review-preview.insanity.team",
+          ...localOrigins,
+          ...insanityOrigins,
+        ],
         icon: "🧩",
         color: "#f97316",
         status: "live",
