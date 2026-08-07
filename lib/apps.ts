@@ -178,6 +178,7 @@ export const sections: AppSection[] = [
         allowedOrigins: [
           "https://foiasorter.insanity.team",
           "https://foia-review-preview.insanity.team",
+          "https://foia-dupe-preview.insanity.team",
           ...localOrigins,
           ...insanityOrigins,
         ],
