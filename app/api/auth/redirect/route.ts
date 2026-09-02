@@ -119,7 +119,7 @@ export async function GET(req: NextRequest) {
     ? isCasesDashboardAllowed(user)
     : appId === FRONTWIND_DUBBING_APP_ID
       ? accessRows.length > 0 && isFrontwindDubbingAllowed(user)
-      : isAdmin || accessRows.length > 0;
+      : app.allowAnyAuthenticatedUser || isAdmin || accessRows.length > 0;
 
   if (!hasAccess) {
     return new Response("Access denied. Contact an admin to request access.", {

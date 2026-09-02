@@ -6,6 +6,7 @@ export interface AppConfig {
   bugReportUrl?: string;
   handoffPath?: string;
   requiresPortalAuth?: boolean;
+  allowAnyAuthenticatedUser?: boolean;
   allowedOrigins?: string[];
   icon: string;
   color: string;
@@ -91,6 +92,7 @@ export const sections: AppSection[] = [
         description: "Internal training courses — scripting department lessons, videos, and supporting materials.",
         url: "https://learn.insanity.team",
         handoffPath: "/api/auth/portal",
+        allowAnyAuthenticatedUser: true,
         allowedOrigins: ["https://learn.insanity.team", ...localOrigins, ...insanityOrigins],
         icon: "🎓",
         color: "#37c2a0",

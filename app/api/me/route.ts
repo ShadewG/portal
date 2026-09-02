@@ -66,6 +66,8 @@ export async function GET() {
         access[app.id] = isCasesDashboardAllowed(user);
       } else if (app.id === FRONTWIND_DUBBING_APP_ID) {
         access[app.id] = hasAppAccess && isFrontwindDubbingAllowed(user);
+      } else if (app.allowAnyAuthenticatedUser) {
+        access[app.id] = true;
       } else if (dbUser.isAdmin) {
         access[app.id] = true;
       } else {
