@@ -43,6 +43,18 @@ export const sections: AppSection[] = [
     color: "#ef4444",
     apps: [
       {
+        id: "desk",
+        name: "Desk",
+        description: "Your day in one place — reviews, projects, packaging, asks, and the team. Every employee's home.",
+        url: "https://desk.insanity.team",
+        handoffPath: "/auth/portal",
+        allowAnyAuthenticatedUser: true,
+        allowedOrigins: ["https://desk.insanity.team", ...localOrigins, ...insanityOrigins],
+        icon: "🗂",
+        color: "#3987e5",
+        status: "live",
+      },
+      {
         id: "script-reviewer",
         name: "Script Shield",
         description: "AI-powered true crime script review — legal risk, YouTube policy, and fact-checking.",

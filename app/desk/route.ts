@@ -1,4 +1,5 @@
 import { readFile } from "node:fs/promises";
+import type { NextRequest } from "next/server";
 import { auth } from "@/auth";
 import { prisma } from "@/lib/db";
 
@@ -58,7 +59,15 @@ async function readJson<T>(path: string): Promise<T | null> {
   }
 }
 
-export async function GET() {
+export async function GET(req: NextRequest) {
+  // Since 17 Sep 2026 the Desk app at desk.insanity.team is the home for everyone; Portal's own
+  // handoff signs them in there. The reviewer-token and admin-overview redirects below stay as
+  // the fallback for ?legacy=1 (the app links to the token page as "your private link").
+  if (req.nextUrl.searchParams.get("legacy") !== "1") {
+    const handoff = new URL("/api/auth/redirect", req.nextUrl.origin);
+    handoff.searchParams.set("app", "desk");
+    return Response.redirect(handoff.toString(), 302);
+  }
   const session = await auth();
   const user = session?.user as Record<string, unknown> | undefined;
   const discordId = user?.discordId;
@@ -69,14 +78,28 @@ export async function GET() {
   // Admin = the env admin, or a user the portal's own admin page has flagged (the same rule
   // /api/admin applies). Samuel signs in as daveslemonade, which is only the latter.
   let isAdmin = user?.isAdmin === true || String(discordId) === process.env.ADMIN_DISCORD_ID;
+  let dbFlag: boolean | null = null;
+  let dbError = "";
   if (!isAdmin) {
     try {
       const dbUser = await prisma.user.findFirst({ where: { discordId: String(discordId) }, select: { isAdmin: true } });
-      isAdmin = dbUser?.isAdmin === true;
-    } catch {
+      dbFlag = dbUser?.isAdmin ?? null;
+      isAdmin = dbFlag === true;
+    } catch (err) {
+      dbError = String(err);
       isAdmin = false;
     }
   }
+  console.error("[/desk] who", {
+    discordId: String(discordId),
+    username: user?.username ?? user?.name ?? null,
+    sessionIsAdmin: user?.isAdmin ?? null,
+    envMatch: String(discordId) === process.env.ADMIN_DISCORD_ID,
+    envSet: Boolean(process.env.ADMIN_DISCORD_ID),
+    dbFlag,
+    dbError: dbError || null,
+    isAdmin,
+  });
 
   if (isAdmin) {
     const desks = await readJson<Desk[]>(DIRECTORY);
