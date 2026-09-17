@@ -11,6 +11,7 @@ export interface PortalToken {
   isAdmin?: boolean;
   appId: string;
   appUserId?: string;
+  apps?: string[];
   iat: number;
   exp: number;
 }
@@ -25,6 +26,7 @@ export function signAppToken(payload: {
   isAdmin?: boolean;
   appId: string;
   appUserId?: string;
+  apps?: string[];
 }): string {
   return jwt.sign(payload, SECRET, { expiresIn: "5m" });
 }

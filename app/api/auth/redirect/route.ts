@@ -3,6 +3,7 @@ import { auth } from "@/auth";
 import { prisma } from "@/lib/db";
 import { getAppById } from "@/lib/apps";
 import { signAppToken } from "@/lib/jwt";
+import { permittedAppIds } from "@/lib/access";
 import { FRONTWIND_DUBBING_APP_ID, isFrontwindDubbingAllowed } from "@/lib/frontwindAccess";
 import { CASES_DASHBOARD_APP_ID, isCasesDashboardAllowed } from "@/lib/casesAccess";
 
@@ -141,6 +142,8 @@ export async function GET(req: NextRequest) {
     isAdmin,
     appId,
     appUserId: link?.externalUserId ?? undefined,
+    // Desk is the employee home: it lists the person's tools, so it gets the permitted app ids.
+    apps: appId === "desk" ? await permittedAppIds({ id: dbUser.id, isAdmin }, user) : undefined,
   });
 
   // Redirect to target app with token
