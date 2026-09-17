@@ -1,5 +1,6 @@
 import { readFile } from "node:fs/promises";
 import { auth } from "@/auth";
+import { prisma } from "@/lib/db";
 
 // Owner (15 Sep 2026): "when people visit desk.insanity.team they automatically see the page
 // linked to their discord profile". The portal already knows who they are — NextAuth with the
@@ -65,7 +66,17 @@ export async function GET() {
     // Middleware normally prevents this; if it is ever reached, say so rather than 500.
     return message("Review desk", "Sign in to the portal first, then reload this page.", 401);
   }
-  const isAdmin = user?.isAdmin === true || String(discordId) === process.env.ADMIN_DISCORD_ID;
+  // Admin = the env admin, or a user the portal's own admin page has flagged (the same rule
+  // /api/admin applies). Samuel signs in as daveslemonade, which is only the latter.
+  let isAdmin = user?.isAdmin === true || String(discordId) === process.env.ADMIN_DISCORD_ID;
+  if (!isAdmin) {
+    try {
+      const dbUser = await prisma.user.findFirst({ where: { discordId: String(discordId) }, select: { isAdmin: true } });
+      isAdmin = dbUser?.isAdmin === true;
+    } catch {
+      isAdmin = false;
+    }
+  }
 
   if (isAdmin) {
     const desks = await readJson<Desk[]>(DIRECTORY);
