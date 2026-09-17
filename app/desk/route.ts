@@ -8,9 +8,10 @@ import { auth } from "@/auth";
 // 0600 map on the same box written by review_desk_portal_map.py.
 //
 // Owner (17 Sep 2026): a reviewer's link opens only their own desk, but "admins like me can access
-// their pages as well if I go to desk". An admin (the portal's own isAdmin flag) gets a directory
-// of every desk instead of a redirect; the list comes from desk-directory.json, written by the
-// same script, so a new reviewer or a rotated token needs no edit here.
+// their pages as well if I go to desk" and "make desk homepage browsable for admin so i can easily
+// see all stats". An admin (the portal's own isAdmin flag) is sent to the every-desk overview page
+// (its token is the "admin" entry in desk-directory.json, written by the same InsanityBot script),
+// falling back to a plain list of desks if that page does not exist yet.
 const DESK = "https://desk.insanity.team";
 const MAP = process.env.DESK_TOKEN_MAP ?? "/opt/apps/review-desk/desk-tokens.json";
 const DIRECTORY = process.env.DESK_DIRECTORY ?? "/opt/apps/review-desk/desk-directory.json";
@@ -71,7 +72,14 @@ export async function GET() {
     if (!desks) {
       return message("Review desks", "The desk directory is unavailable right now. Try again shortly.", 503);
     }
+    // The overview page (every desk's numbers, a button through to each) is the admin's homepage;
+    // the plain list below only appears if that page has not been built yet.
+    const overview = desks.find((d) => d.reviewer_id === "admin");
+    if (overview) {
+      return Response.redirect(`${DESK}/${encodeURIComponent(overview.token)}/`, 302);
+    }
     const rows = desks
+      .filter((d) => d.reviewer_id !== "admin")
       .map(
         (d) =>
           `<div class="row"><div><b>${escape(d.name)}</b><span>rebuilt every 10 minutes · same numbers as the reviewer sees</span></div>` +
