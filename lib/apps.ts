@@ -7,6 +7,7 @@ export interface AppConfig {
   handoffPath?: string;
   requiresPortalAuth?: boolean;
   allowAnyAuthenticatedUser?: boolean;
+  requireExplicitGrant?: boolean;
   allowedOrigins?: string[];
   icon: string;
   color: string;
@@ -43,12 +44,35 @@ export const sections: AppSection[] = [
     color: "#ef4444",
     apps: [
       {
+        id: "pulse",
+        name: "Pulse",
+        description: "Production and team activity.",
+        url: "https://pulse.insanity.team",
+        handoffPath: "/auth/portal",
+        requireExplicitGrant: true,
+        allowedOrigins: ["https://pulse.insanity.team"],
+        icon: "⌁",
+        color: "#75976a",
+        status: "live",
+      },
+      {
+        id: "patreon",
+        name: "Patreon pilot",
+        description: "What a members package looks like — IB30 Daniel Krug, streamed live from Dropbox.",
+        url: "https://patreon.insanity.team",
+        handoffPath: "/auth/portal",
+        allowedOrigins: ["https://patreon.insanity.team"],
+        icon: "★",
+        color: "#e0332c",
+        status: "live",
+      },
+      {
         id: "desk",
         name: "Desk",
         description: "Your day in one place — reviews, projects, packaging, asks, and the team. Every employee's home.",
         url: "https://desk.insanity.team",
         handoffPath: "/auth/portal",
-        allowAnyAuthenticatedUser: true,
+        requireExplicitGrant: true,
         allowedOrigins: ["https://desk.insanity.team", ...localOrigins, ...insanityOrigins],
         icon: "🗂",
         color: "#3987e5",
