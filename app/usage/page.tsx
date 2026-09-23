@@ -21,12 +21,58 @@ type Account = {
   status: "ok" | "limited" | "stale" | "error" | "unknown";
   credits?: number | null;
   note?: string;
+  resets_banked?: number | null;
+  resets_usable?: number | null;
+  extra_usage?: { enabled: boolean; reason?: string | null; used?: number | null; limit?: number | null; currency?: string; decimals?: number };
+  breakdown?: { name: string; percent: number }[];
   windows: Win[];
 };
 type Series = { id: string; key: string; points: [number, number][] };
+type Row = { name: string; share: number; dollars: number; calls?: number; runs?: number; group?: string; sessions?: number; pct_of_week?: number };
+type Cal = { pct_per_dollar: number; hours: number; rise: number } | null;
+type Family = "codex" | "claude";
+type Run = { who: string; what?: string; dollars: number; calls?: number; at?: number; source?: string; model?: string };
+type Stats = {
+  at: number;
+  calibration: Record<Family, Cal>;
+  windows: Record<"24h" | "7d", { codex: Row[]; codex_total: number; claude: Row[]; claude_total: number; claude_models: Row[] }>;
+  hourly: Record<Family, { hours: number[]; series: Record<string, number[]> }>;
+  top_runs: Record<Family, Run[]>;
+};
+type ResetEvent = {
+  t: number;
+  account: string;
+  name?: string;
+  window?: string;
+  kind: "reset" | "early_reset" | "reset_credit_used" | "reset_credit_added";
+  from?: number;
+  to?: number;
+  count?: number;
+  banked?: number;
+  was_due?: number;
+  recovered?: boolean;
+};
 type Payload =
-  | { ok: true; at: number; now: number; accounts: Account[]; series: Series[]; history_from: number | null }
+  | {
+      ok: true;
+      at: number;
+      now: number;
+      accounts: Account[];
+      series: Series[];
+      history_from: number | null;
+      stats: Stats | null;
+      events: ResetEvent[];
+    }
   | { ok: false; error: string };
+type Tab = "overview" | "using" | "resets";
+const TABS: { id: Tab; label: string }[] = [
+  { id: "overview", label: "Overview" },
+  { id: "using", label: "What's using it" },
+  { id: "resets", label: "Resets" },
+];
+// Stacked-chart slots, validated on #111118 (dark): all checks pass. "Other" is neutral.
+const STACK_COLORS = ["#3987e5", "#d95926", "#199e70", "#c98500", "#d55181"];
+const OTHER_COLOR = "#55556a";
 
 // Categorical order, validated on the portal surface #111118 (dark): all checks pass.
 const SERIES_COLORS: Record<string, string> = {
@@ -64,6 +110,15 @@ function level(used: number, limited: boolean) {
   return { color: "var(--green)", icon: "●", label: "OK" };
 }
 
+function money(minor: number | null | undefined, decimals = 2) {
+  if (typeof minor !== "number") return "—";
+  return `$${(minor / 10 ** decimals).toFixed(2)}`;
+}
+
+function fmtDollars(v: number) {
+  return v >= 100 ? `$${Math.round(v).toLocaleString()}` : `$${v.toFixed(2)}`;
+}
+
 function shortName(a: Account) {
   if (a.kind === "claude") return "Claude";
   return a.email ?? a.id;
@@ -73,6 +128,17 @@ export default function UsagePage() {
   const [data, setData] = useState<Payload | null>(null);
   const [forbidden, setForbidden] = useState(false);
   const [clock, setClock] = useState(() => Date.now() / 1000);
+  const [tab, setTab] = useState<Tab>("overview");
+
+  useEffect(() => {
+    const fromHash = () => {
+      const h = window.location.hash.replace("#", "") as Tab;
+      if (TABS.some((t) => t.id === h)) setTab(h);
+    };
+    fromHash();
+    window.addEventListener("hashchange", fromHash);
+    return () => window.removeEventListener("hashchange", fromHash);
+  }, []);
 
   const load = useCallback(async () => {
     try {
@@ -131,6 +197,35 @@ export default function UsagePage() {
         {data && !data.ok && <p style={{ color: "var(--red)" }}>{data.error}</p>}
 
         {data && data.ok && (
+          <nav role="tablist" style={{ display: "flex", gap: 4, borderBottom: "1px solid var(--border)", marginBottom: 24, overflowX: "auto" }}>
+            {TABS.map((t) => (
+              <a
+                key={t.id}
+                role="tab"
+                aria-selected={tab === t.id}
+                href={`#${t.id}`}
+                onClick={() => setTab(t.id)}
+                style={{
+                  padding: "10px 14px",
+                  fontSize: 12,
+                  fontWeight: 600,
+                  whiteSpace: "nowrap",
+                  textDecoration: "none",
+                  color: tab === t.id ? "var(--text)" : "var(--text-dim)",
+                  borderBottom: tab === t.id ? "2px solid var(--accent)" : "2px solid transparent",
+                  marginBottom: -1,
+                }}
+              >
+                {t.label}
+              </a>
+            ))}
+          </nav>
+        )}
+
+        {data && data.ok && tab === "using" && <UsingTab stats={data.stats} />}
+        {data && data.ok && tab === "resets" && <ResetsTab accounts={data.accounts} events={data.events} now={clock} historyFrom={data.history_from} />}
+
+        {data && data.ok && tab === "overview" && (
           <>
             <section style={{ marginBottom: 24 }}>
               <div style={{ fontSize: 22, fontWeight: 700, marginBottom: 6 }}>
@@ -205,6 +300,25 @@ function AccountCard({ a, now }: { a: Account; now: number }) {
       {a.windows.map((w) => (
         <WindowMeter key={w.key} w={w} limited={a.status === "limited" && w.used >= 100} now={now} />
       ))}
+
+      {a.kind === "codex" && typeof a.resets_banked === "number" && (
+        <div style={{ fontSize: 11, color: a.resets_usable ? "var(--amber)" : "var(--text-dim)" }}>
+          {a.resets_banked === 0
+            ? "No banked resets"
+            : a.resets_usable
+              ? `▲ ${a.resets_usable} banked reset${a.resets_usable === 1 ? "" : "s"} ready to use now (${a.resets_banked} banked)`
+              : `${a.resets_banked} banked reset${a.resets_banked === 1 ? "" : "s"} — usable once this account runs out`}
+        </div>
+      )}
+
+      {a.kind === "claude" && a.extra_usage && (
+        <div style={{ fontSize: 11, color: "var(--text-dim)" }}>
+          Extra usage after the limit:{" "}
+          {a.extra_usage.enabled
+            ? `on — ${money(a.extra_usage.used, a.extra_usage.decimals)} of ${money(a.extra_usage.limit, a.extra_usage.decimals)} this month`
+            : `off${a.extra_usage.reason === "out_of_credits" ? " (no credits)" : ""}`}
+        </div>
+      )}
 
       {typeof a.credits === "number" && a.credits > 0 && (
         <div style={{ fontSize: 11, color: "var(--text-dim)" }}>
@@ -331,7 +445,8 @@ function UsageChart({
     <section style={{ background: "var(--bg-surface)", border: "1px solid var(--border)", padding: 18 }}>
       <div style={{ fontSize: 13, fontWeight: 700, marginBottom: 4 }}>Weekly usage, last 7 days</div>
       <div style={{ fontSize: 11, color: "var(--text-dim)", marginBottom: 12 }}>
-        % of each account&apos;s weekly limit. A drop to 0 is a weekly reset.
+        % of each account&apos;s weekly limit. A drop to 0 is a reset. Dashed = no readings in between (history before
+        23 Sep only has readings from when Codex was used by hand).
         {historyFrom && historyFrom > x0 ? ` History starts ${fmtWhen(historyFrom)}.` : ""}
       </div>
       <div style={{ display: "flex", flexWrap: "wrap", gap: "6px 16px", marginBottom: 10 }}>
@@ -373,15 +488,24 @@ function UsageChart({
             ))}
             {series.map((s) => {
               if (s.points.length < 2) return null;
-              // break the line across gaps longer than 2 hours (collector down)
+              // solid where readings are continuous; a faint dashed bridge across gaps
+              // longer than 2 hours (older history only has readings when Codex CLI ran)
               let dStr = "";
+              let gapStr = "";
               s.points.forEach(([t, v], i) => {
                 const gap = i > 0 && t - s.points[i - 1][0] > 7200;
+                if (gap) {
+                  const [pt, pv] = s.points[i - 1];
+                  gapStr += `M${x(pt).toFixed(1)},${y(pv).toFixed(1)}L${x(t).toFixed(1)},${y(v).toFixed(1)}`;
+                }
                 dStr += `${i === 0 || gap ? "M" : "L"}${x(t).toFixed(1)},${y(v).toFixed(1)}`;
               });
               const last = s.points[s.points.length - 1];
               return (
                 <g key={s.id}>
+                  {gapStr && (
+                    <path d={gapStr} fill="none" stroke={SERIES_COLORS[s.id]} strokeWidth={1} strokeDasharray="3 4" opacity={0.45} />
+                  )}
                   <path d={dStr} fill="none" stroke={SERIES_COLORS[s.id]} strokeWidth={2} strokeLinejoin="round" strokeLinecap="round" />
                   {width >= 520 && (
                     <text x={x(last[0]) + 8} y={y(last[1]) + 4} fontSize={10} fill="var(--text-dim)">
@@ -429,5 +553,419 @@ function UsageChart({
         )}
       </div>
     </section>
+  );
+}
+
+/* ------------------------------------------------------------------ What's using it */
+
+function UsingTab({ stats }: { stats: Stats | null }) {
+  const [range, setRange] = useState<"24h" | "7d">("24h");
+  if (!stats) {
+    return <p style={{ color: "var(--text-dim)" }}>The usage breakdown is being prepared — it refreshes every 10 minutes.</p>;
+  }
+  const w = stats.windows[range];
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap: 20 }}>
+      <div style={{ display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
+        <div role="group" aria-label="Time range" style={{ display: "inline-flex", border: "1px solid var(--border)" }}>
+          {(["24h", "7d"] as const).map((r) => (
+            <button
+              key={r}
+              onClick={() => setRange(r)}
+              aria-pressed={range === r}
+              style={{
+                padding: "6px 12px",
+                fontSize: 11,
+                fontFamily: "inherit",
+                cursor: "pointer",
+                border: "none",
+                background: range === r ? "var(--bg-elevated)" : "transparent",
+                color: range === r ? "var(--text)" : "var(--text-dim)",
+              }}
+            >
+              {r === "24h" ? "Last 24 hours" : "Last 7 days"}
+            </button>
+          ))}
+        </div>
+        <span style={{ fontSize: 11, color: "var(--text-muted)" }}>
+          Dollar figures are what the usage would cost at public API prices — a yardstick for comparing, not a bill. Refreshed{" "}
+          {fmtIn(Date.now() / 1000 - stats.at)} ago.
+        </span>
+      </div>
+
+      <FamilyPanel
+        title="Codex accounts — the bots and Codex CLI"
+        rows={w.codex}
+        total={w.codex_total}
+        cal={stats.calibration.codex}
+        calNote="of one account's weekly limit (3 accounts = 300%)"
+        hourly={stats.hourly.codex}
+        runs={stats.top_runs.codex}
+        runsTitle="Heaviest single runs, last 24 hours"
+        unit="calls"
+      />
+      <FamilyPanel
+        title="Claude account — Claude Code sessions"
+        rows={w.claude}
+        total={w.claude_total}
+        cal={stats.calibration.claude}
+        calNote="of the weekly limit"
+        hourly={stats.hourly.claude}
+        hourlyTitle="By model, per 3 hours"
+        runs={stats.top_runs.claude}
+        runsTitle="Heaviest sessions, last 24 hours"
+        extra={w.claude_models}
+        extraTitle="By model"
+        unit="replies"
+      />
+    </div>
+  );
+}
+
+function FamilyPanel(props: {
+  title: string;
+  rows: Row[];
+  total: number;
+  cal: Cal;
+  calNote: string;
+  hourly: { hours: number[]; series: Record<string, number[]> };
+  hourlyTitle?: string;
+  runs: Run[];
+  runsTitle: string;
+  extra?: Row[];
+  extraTitle?: string;
+  unit: string;
+}) {
+  const { title, rows, total, cal, calNote } = props;
+  const [all, setAll] = useState(false);
+  const shown = all ? rows : rows.slice(0, 10);
+  return (
+    <section style={{ background: "var(--bg-surface)", border: "1px solid var(--border)", padding: 18, minWidth: 0 }}>
+      <div style={{ fontSize: 14, fontWeight: 700, marginBottom: 6 }}>{title}</div>
+      <div style={{ fontSize: 12, color: "var(--text-dim)", marginBottom: 16, lineHeight: 1.6 }}>
+        {fmtDollars(total)} of usage at API prices.{" "}
+        {cal
+          ? `That is about ${Math.round(total * cal.pct_per_dollar)}% ${calNote}.`
+          : "The “% of weekly limit” estimate appears once the monitor has watched the accounts for 6 hours."}
+      </div>
+
+      {rows.length === 0 && <div style={{ fontSize: 12, color: "var(--text-muted)" }}>No usage in this period.</div>}
+      <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+        {shown.map((r) => (
+          <div key={r.name} style={{ minWidth: 0 }}>
+            <div style={{ display: "flex", alignItems: "baseline", gap: 8, marginBottom: 4, flexWrap: "wrap" }}>
+              <span style={{ fontSize: 12, fontWeight: 600, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", maxWidth: "100%" }}>
+                {r.name}
+              </span>
+              {r.group && r.group !== "Home folder (general)" && (
+                <span style={{ fontSize: 10, color: "var(--text-muted)" }}>{r.group}</span>
+              )}
+              <span style={{ marginLeft: "auto", fontSize: 11, color: "var(--text-dim)", whiteSpace: "nowrap" }}>
+                <b style={{ color: "var(--text)" }}>{r.share.toFixed(r.share < 1 ? 1 : 0)}%</b> · {fmtDollars(r.dollars)}
+                {typeof r.pct_of_week === "number" ? ` · ≈${r.pct_of_week < 1 ? "<1" : Math.round(r.pct_of_week)}% of a week` : ""}
+                {r.calls ? ` · ${r.calls.toLocaleString()} ${props.unit}` : ""}
+              </span>
+            </div>
+            <div style={{ height: 6, background: "var(--bg-elevated)", borderRadius: 3 }}>
+              <div style={{ width: `${Math.max(0.5, Math.min(100, r.share))}%`, height: "100%", background: "#3987e5", borderRadius: 3 }} />
+            </div>
+          </div>
+        ))}
+      </div>
+      {rows.length > 10 && (
+        <button
+          onClick={() => setAll(!all)}
+          style={{ marginTop: 12, fontSize: 11, fontFamily: "inherit", background: "none", border: "none", color: "var(--accent)", cursor: "pointer", padding: 0 }}
+        >
+          {all ? "Show top 10" : `Show all ${rows.length}`}
+        </button>
+      )}
+
+      {props.extra && props.extra.length > 0 && (
+        <div style={{ marginTop: 20 }}>
+          <div style={{ fontSize: 11, color: "var(--text-dim)", textTransform: "uppercase", letterSpacing: "0.08em", marginBottom: 8 }}>{props.extraTitle}</div>
+          <div style={{ display: "flex", flexWrap: "wrap", gap: "6px 18px", fontSize: 12 }}>
+            {props.extra.map((r) => (
+              <span key={r.name}>
+                {r.name} <b>{r.share.toFixed(0)}%</b> <span style={{ color: "var(--text-muted)" }}>({fmtDollars(r.dollars)})</span>
+              </span>
+            ))}
+          </div>
+        </div>
+      )}
+
+      <StackedHourly data={props.hourly} title={props.hourlyTitle ?? "Who used it, per 3 hours (last 7 days)"} />
+
+      <div style={{ marginTop: 20 }}>
+        <div style={{ fontSize: 11, color: "var(--text-dim)", textTransform: "uppercase", letterSpacing: "0.08em", marginBottom: 8 }}>{props.runsTitle}</div>
+        {props.runs.length === 0 && <div style={{ fontSize: 12, color: "var(--text-muted)" }}>None.</div>}
+        <div style={{ display: "flex", flexDirection: "column" }}>
+          {props.runs.map((r, i) => (
+            <div
+              key={i}
+              style={{ display: "flex", gap: 10, alignItems: "baseline", padding: "7px 0", borderTop: i ? "1px solid var(--border)" : "none", minWidth: 0 }}
+            >
+              <span style={{ fontSize: 12, fontWeight: 700, width: 64, flex: "none", textAlign: "right" }}>{fmtDollars(r.dollars)}</span>
+              <span style={{ minWidth: 0, flex: 1 }}>
+                <span style={{ fontSize: 12, fontWeight: 600 }}>{r.who}</span>
+                <span style={{ fontSize: 11, color: "var(--text-dim)" }}>
+                  {r.at ? ` · ${fmtWhen(r.at)}` : ""}
+                  {r.calls ? ` · ${r.calls} ${props.unit}` : ""}
+                </span>
+                <div style={{ fontSize: 11, color: "var(--text-muted)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                  {r.what || "—"}
+                </div>
+              </span>
+            </div>
+          ))}
+        </div>
+      </div>
+    </section>
+  );
+}
+
+function StackedHourly({ data, title }: { data: { hours: number[]; series: Record<string, number[]> }; title: string }) {
+  const boxRef = useRef<HTMLDivElement>(null);
+  const [width, setWidth] = useState(800);
+  const [hover, setHover] = useState<number | null>(null);
+  useEffect(() => {
+    const el = boxRef.current;
+    if (!el) return;
+    const ro = new ResizeObserver(() => setWidth(el.clientWidth));
+    ro.observe(el);
+    setWidth(el.clientWidth);
+    return () => ro.disconnect();
+  }, []);
+
+  // 3-hour columns: hourly columns would be a few pixels wide
+  const names = Object.keys(data.series);
+  const cols: { t: number; vals: number[] }[] = [];
+  for (let i = 0; i < data.hours.length; i += 3) {
+    cols.push({ t: data.hours[i], vals: names.map((n) => data.series[n].slice(i, i + 3).reduce((a, b) => a + b, 0)) });
+  }
+  const max = Math.max(1e-9, ...cols.map((c) => c.vals.reduce((a, b) => a + b, 0)));
+  const nice = niceMax(max);
+  const H = 180;
+  const pad = { l: 44, r: 8, t: 8, b: 22 };
+  const plotW = Math.max(10, width - pad.l - pad.r);
+  const colW = plotW / Math.max(1, cols.length);
+  const barW = Math.max(1, colW - 2);
+  const y = (v: number) => pad.t + (1 - v / nice) * (H - pad.t - pad.b);
+  const color = (n: string, i: number) => (n === "Other" ? OTHER_COLOR : STACK_COLORS[i % STACK_COLORS.length]);
+  if (!names.length) return null;
+
+  return (
+    <div style={{ marginTop: 20 }}>
+      <div style={{ fontSize: 11, color: "var(--text-dim)", textTransform: "uppercase", letterSpacing: "0.08em", marginBottom: 8 }}>{title}</div>
+      <div style={{ display: "flex", flexWrap: "wrap", gap: "4px 14px", marginBottom: 8 }}>
+        {names.map((n, i) => (
+          <span key={n} style={{ display: "inline-flex", alignItems: "center", gap: 6, fontSize: 11, color: "var(--text-dim)" }}>
+            <span style={{ width: 10, height: 10, background: color(n, i), borderRadius: 2 }} />
+            {n}
+          </span>
+        ))}
+      </div>
+      <div ref={boxRef} style={{ position: "relative", width: "100%" }}>
+        <svg
+          width={width}
+          height={H}
+          style={{ display: "block", touchAction: "pan-y" }}
+          role="img"
+          aria-label={title}
+          onPointerMove={(e) => {
+            const px = e.clientX - e.currentTarget.getBoundingClientRect().left - pad.l;
+            const i = Math.floor(px / colW);
+            setHover(i >= 0 && i < cols.length ? i : null);
+          }}
+          onPointerLeave={() => setHover(null)}
+        >
+          {[0, nice / 2, nice].map((v) => (
+            <g key={v}>
+              <line x1={pad.l} x2={width - pad.r} y1={y(v)} y2={y(v)} stroke="var(--border)" />
+              <text x={pad.l - 6} y={y(v) + 4} textAnchor="end" fontSize={10} fill="var(--text-muted)">
+                {fmtDollars(v)}
+              </text>
+            </g>
+          ))}
+          {cols.map((c, i) => {
+            let acc = 0;
+            const x = pad.l + i * colW + 1;
+            return (
+              <g key={c.t} opacity={hover === null || hover === i ? 1 : 0.55}>
+                {c.vals.map((v, j) => {
+                  if (v <= 0) return null;
+                  const y0 = y(acc);
+                  acc += v;
+                  const y1 = y(acc);
+                  // 2px surface gap between stacked segments
+                  const h = Math.max(0, y0 - y1 - (acc < c.vals.reduce((a, b) => a + b, 0) ? 2 : 0));
+                  return <rect key={j} x={x} y={y1} width={barW} height={h} fill={color(names[j], j)} rx={acc >= c.vals.reduce((a, b) => a + b, 0) ? 2 : 0} />;
+                })}
+              </g>
+            );
+          })}
+          {cols
+            .filter((c) => new Date(c.t * 1000).getHours() < 3)
+            .map((c) => {
+              const i = cols.indexOf(c);
+              return (
+                <text key={c.t} x={pad.l + i * colW + colW / 2} y={H - 6} textAnchor="middle" fontSize={10} fill="var(--text-muted)">
+                  {new Date(c.t * 1000).toLocaleDateString(undefined, { weekday: "short" })}
+                </text>
+              );
+            })}
+        </svg>
+        {hover !== null && (
+          <div
+            style={{
+              position: "absolute",
+              top: 4,
+              left: Math.min(Math.max(pad.l + hover * colW + colW + 8, 0), width - 210),
+              width: 200,
+              background: "var(--bg-elevated)",
+              border: "1px solid var(--border-bright)",
+              padding: "8px 10px",
+              fontSize: 11,
+              pointerEvents: "none",
+            }}
+          >
+            <div style={{ color: "var(--text-dim)", marginBottom: 6 }}>
+              {fmtWhen(cols[hover].t)} – {new Date((cols[hover].t + 3 * 3600) * 1000).toLocaleTimeString(undefined, { hour: "2-digit", minute: "2-digit" })}
+            </div>
+            {names.map((n, j) =>
+              cols[hover].vals[j] > 0 ? (
+                <div key={n} style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                  <span style={{ width: 8, height: 8, borderRadius: 2, background: color(n, j) }} />
+                  <span style={{ flex: 1, color: "var(--text-dim)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{n}</span>
+                  <b>{fmtDollars(cols[hover].vals[j])}</b>
+                </div>
+              ) : null,
+            )}
+            {cols[hover].vals.every((v) => v <= 0) && <div style={{ color: "var(--text-muted)" }}>No usage</div>}
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function niceMax(v: number) {
+  const exp = 10 ** Math.floor(Math.log10(v));
+  for (const m of [1, 2, 2.5, 5, 10]) if (m * exp >= v) return m * exp;
+  return 10 * exp;
+}
+
+/* ------------------------------------------------------------------ Resets */
+
+const EVENT_TEXT: Record<ResetEvent["kind"], string> = {
+  reset: "Limit reset on schedule",
+  early_reset: "Reset early, before its scheduled date — usually a banked reset being used",
+  reset_credit_used: "Banked reset used",
+  reset_credit_added: "New banked reset added",
+};
+
+function ResetsTab({ accounts, events, now, historyFrom }: { accounts: Account[]; events: ResetEvent[]; now: number; historyFrom: number | null }) {
+  const codex = accounts.filter((a) => a.kind === "codex");
+  const claude = accounts.find((a) => a.kind === "claude");
+  const banked = codex.reduce((n, a) => n + (a.resets_banked ?? 0), 0);
+  const usable = codex.reduce((n, a) => n + (a.resets_usable ?? 0), 0);
+  const earlyIn = (id: string, days: number) =>
+    events.filter((e) => e.account === id && e.kind === "early_reset" && e.t >= now - days * 86400).length;
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap: 20 }}>
+      <section>
+        <div style={{ fontSize: 22, fontWeight: 700, marginBottom: 6 }}>
+          {banked} banked reset{banked === 1 ? "" : "s"} across the Codex accounts
+          {usable ? ` — ${usable} ready to use now` : ""}
+        </div>
+        <div style={{ fontSize: 12, color: "var(--text-dim)", lineHeight: 1.6 }}>
+          A banked reset refills an account&apos;s weekly limit straight away. OpenAI only lets you use one when that account has run out.
+          To use one: open Codex on that account and choose “Reset usage”.
+        </div>
+      </section>
+
+      <section style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(240px, 1fr))", gap: 14 }}>
+        {codex.map((a) => {
+          const w = a.windows.find((x) => x.key === "weekly") ?? a.windows[0];
+          return (
+            <div key={a.id} style={{ background: "var(--bg-surface)", border: "1px solid var(--border)", padding: 18, minWidth: 0 }}>
+              <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 12 }}>
+                <span style={{ width: 10, height: 10, borderRadius: 999, background: SERIES_COLORS[a.id], flex: "none" }} />
+                <span style={{ fontSize: 13, fontWeight: 700, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{a.email ?? a.id}</span>
+              </div>
+              <div style={{ display: "flex", gap: 24, marginBottom: 12 }}>
+                <div>
+                  <div style={{ fontSize: 30, fontWeight: 700, lineHeight: 1 }}>{a.resets_banked ?? "—"}</div>
+                  <div style={{ fontSize: 11, color: "var(--text-dim)", marginTop: 4 }}>banked</div>
+                </div>
+                <div>
+                  <div style={{ fontSize: 30, fontWeight: 700, lineHeight: 1, color: a.resets_usable ? "var(--amber)" : "var(--text)" }}>
+                    {a.resets_usable ?? "—"}
+                  </div>
+                  <div style={{ fontSize: 11, color: "var(--text-dim)", marginTop: 4 }}>usable now</div>
+                </div>
+              </div>
+              <div style={{ fontSize: 11, color: "var(--text-dim)", lineHeight: 1.6 }}>
+                <div style={{ marginBottom: 4 }}>
+                  Early resets: <b style={{ color: "var(--text)" }}>{earlyIn(a.id, 7)}</b> in the last 7 days ·{" "}
+                  <b style={{ color: "var(--text)" }}>{earlyIn(a.id, 30)}</b> in 30 days
+                </div>
+                {w ? `${Math.round(w.used)}% of the week used. ` : ""}
+                {w?.resets_at ? `Next scheduled reset ${fmtWhen(w.resets_at)} (in ${fmtIn(w.resets_at - now)}).` : ""}
+                {a.resets_usable ? <div style={{ color: "var(--amber)" }}>▲ This account is out — using a banked reset would bring it back now.</div> : null}
+              </div>
+            </div>
+          );
+        })}
+        {claude && (
+          <div style={{ background: "var(--bg-surface)", border: "1px solid var(--border)", padding: 18, minWidth: 0 }}>
+            <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 12 }}>
+              <span style={{ width: 10, height: 10, borderRadius: 999, background: SERIES_COLORS.claude, flex: "none" }} />
+              <span style={{ fontSize: 13, fontWeight: 700 }}>Claude</span>
+            </div>
+            <div style={{ fontSize: 11, color: "var(--text-dim)", lineHeight: 1.7 }}>
+              Claude has no banked resets. Its limits refill on a schedule:
+              {claude.windows.map((w) => (
+                <div key={w.key}>
+                  {w.label}: {w.resets_at ? `${fmtWhen(w.resets_at)} (in ${fmtIn(w.resets_at - now)})` : "—"}
+                </div>
+              ))}
+              {claude.extra_usage && (
+                <div style={{ marginTop: 6 }}>
+                  Extra usage after the limit: {claude.extra_usage.enabled ? "on" : "off"}
+                  {claude.extra_usage.reason === "out_of_credits" ? " — no credits on the account" : ""}
+                </div>
+              )}
+            </div>
+          </div>
+        )}
+      </section>
+
+      <section style={{ background: "var(--bg-surface)", border: "1px solid var(--border)", padding: 18 }}>
+        <div style={{ fontSize: 13, fontWeight: 700, marginBottom: 4 }}>Reset history</div>
+        <div style={{ fontSize: 11, color: "var(--text-dim)", marginBottom: 12 }}>
+          Every reset seen since the monitor started, plus earlier ones recovered from Codex logs
+          {historyFrom ? ` (back to ${fmtWhen(historyFrom)})` : ""}. Earlier resets on accounts that were not used by hand
+          may be missing.
+        </div>
+        {events.length === 0 && <div style={{ fontSize: 12, color: "var(--text-muted)" }}>No resets seen yet.</div>}
+        {events.map((e, i) => (
+          <div key={i} style={{ display: "flex", gap: 12, padding: "8px 0", borderTop: i ? "1px solid var(--border)" : "none", alignItems: "baseline", flexWrap: "wrap" }}>
+            <span style={{ fontSize: 11, color: "var(--text-dim)", width: 150, flex: "none" }}>{fmtWhen(e.t)}</span>
+            <span style={{ display: "inline-flex", alignItems: "center", gap: 6, minWidth: 0, flex: 1 }}>
+              <span style={{ width: 8, height: 8, borderRadius: 999, background: SERIES_COLORS[e.account] ?? "var(--text-dim)", flex: "none" }} />
+              <span style={{ fontSize: 12 }}>
+                <b>{e.name ?? e.account}</b> — {EVENT_TEXT[e.kind]}
+                {e.window ? ` (${e.window})` : ""}
+                {typeof e.from === "number" && typeof e.to === "number" ? `: ${Math.round(e.from)}% → ${Math.round(e.to)}%` : ""}
+                {e.kind === "reset_credit_used" || e.kind === "reset_credit_added" ? ` — ${e.banked ?? "?"} left` : ""}
+                {e.kind === "early_reset" && e.was_due ? ` — was due ${fmtWhen(e.was_due)}` : ""}
+                {e.recovered && <span style={{ color: "var(--text-muted)" }}> · from Codex logs</span>}
+              </span>
+            </span>
+          </div>
+        ))}
+      </section>
+    </div>
   );
 }

@@ -27,6 +27,8 @@ export type UsageAccount = {
   limited?: boolean;
   credits?: number | null;
   note?: string;
+  resets_banked?: number | null;
+  resets_usable?: number | null;
   windows: UsageWindow[];
 };
 
@@ -132,6 +134,34 @@ function buildSeries(samples: Sample[], accounts: UsageAccount[], now: number): 
     .filter((s): s is UsageSeries => s !== null);
 }
 
+async function readJson<T>(name: string): Promise<T | null> {
+  try {
+    return JSON.parse(await fs.readFile(`${DATA_DIR}/${name}`, "utf8")) as T;
+  } catch {
+    return null;
+  }
+}
+
+/** Resets seen by the collector (newest first, last 60 days). */
+async function readEvents(now: number) {
+  try {
+    const raw = await fs.readFile(`${DATA_DIR}/events.jsonl`, "utf8");
+    const out: Record<string, unknown>[] = [];
+    for (const line of raw.split("\n")) {
+      if (!line.trim()) continue;
+      try {
+        const e = JSON.parse(line);
+        if (e.t >= now - 60 * 86400) out.push(e);
+      } catch {
+        /* skip */
+      }
+    }
+    return out.sort((x, y) => (y.t as number) - (x.t as number)).slice(0, 200);
+  } catch {
+    return [];
+  }
+}
+
 export async function readUsage() {
   const now = Date.now() / 1000;
   let snap: { at: number; accounts: UsageAccount[] } | null = null;
@@ -152,5 +182,8 @@ export async function readUsage() {
     accounts,
     series: buildSeries(samples, accounts, now),
     history_from: samples.length ? samples[0].t : null,
+    // written every 10 minutes by /opt/apps/usage-monitor/stats.py
+    stats: await readJson<Record<string, unknown>>("stats.json"),
+    events: await readEvents(now),
   };
 }
