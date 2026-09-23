@@ -18,7 +18,7 @@ type Account = {
   role: string;
   email?: string | null;
   plan?: string;
-  status: "ok" | "limited" | "stale" | "error" | "unknown";
+  status: "ok" | "limited" | "stale" | "error" | "unknown" | "logged_out";
   credits?: number | null;
   note?: string;
   resets_banked?: number | null;
@@ -28,14 +28,24 @@ type Account = {
   windows: Win[];
 };
 type Series = { id: string; key: string; points: [number, number][] };
-type Row = { name: string; share: number; dollars: number; calls?: number; runs?: number; group?: string; sessions?: number; pct_of_week?: number };
-type Cal = { pct_per_dollar: number; hours: number; rise: number } | null;
+type Row = { name: string; share: number; dollars: number; calls?: number; runs?: number; group?: string; sessions?: number; pct_of_week?: number; kind?: string };
 type Family = "codex" | "claude";
-type Run = { who: string; what?: string; dollars: number; calls?: number; at?: number; source?: string; model?: string };
+type Run = { who: string; what?: string; task?: string; dollars: number; calls?: number; at?: number; source?: string; model?: string };
 type Stats = {
   at: number;
-  calibration: Record<Family, Cal>;
-  windows: Record<"24h" | "7d", { codex: Row[]; codex_total: number; claude: Row[]; claude_total: number; claude_models: Row[] }>;
+  windows: Record<
+    "24h" | "7d",
+    {
+      bots: Row[];
+      codex_total: number;
+      tasks: Record<string, Row[]>;
+      claude: Row[];
+      claude_total: number;
+      claude_models: Row[];
+      accounts: Record<string, { rise: number; rows: { name: string; dollars: number; pct: number }[]; watched_hours: number }>;
+      watched_since: number;
+    }
+  >;
   hourly: Record<Family, { hours: number[]; series: Record<string, number[]> }>;
   top_runs: Record<Family, Run[]>;
 };
@@ -222,7 +232,7 @@ export default function UsagePage() {
           </nav>
         )}
 
-        {data && data.ok && tab === "using" && <UsingTab stats={data.stats} />}
+        {data && data.ok && tab === "using" && <UsingTab stats={data.stats} accounts={data.accounts} />}
         {data && data.ok && tab === "resets" && <ResetsTab accounts={data.accounts} events={data.events} now={clock} historyFrom={data.history_from} />}
 
         {data && data.ok && tab === "overview" && (
@@ -264,7 +274,7 @@ export default function UsagePage() {
 }
 
 function AccountCard({ a, now }: { a: Account; now: number }) {
-  const broken = a.status === "stale" || a.status === "error" || a.status === "unknown";
+  const broken = a.status === "stale" || a.status === "error" || a.status === "unknown" || a.status === "logged_out";
   return (
     <div
       style={{
@@ -291,7 +301,13 @@ function AccountCard({ a, now }: { a: Account; now: number }) {
         </div>
       </div>
 
-      {broken && (
+      {a.status === "logged_out" && (
+        <div style={{ fontSize: 12, color: "var(--red)", lineHeight: 1.6 }}>
+          <div style={{ fontWeight: 700, marginBottom: 4 }}>■ Logged out — needs signing in again</div>
+          OpenAI rejected this account&apos;s login, so the bots can&apos;t use it and fall back to the other accounts.
+        </div>
+      )}
+      {broken && a.status !== "logged_out" && (
         <div style={{ fontSize: 12, color: "var(--amber)" }}>
           ▲ {a.note ?? "Usage could not be read right now."}
         </div>
@@ -558,14 +574,61 @@ function UsageChart({
 
 /* ------------------------------------------------------------------ What's using it */
 
-function UsingTab({ stats }: { stats: Stats | null }) {
+type AcctRow = { name: string; dollars: number; pct: number };
+type View = "bots" | "codex-4" | "codex-3" | "codex-main" | "claude";
+
+function UsingTab({ stats, accounts }: { stats: Stats | null; accounts: Account[] }) {
   const [range, setRange] = useState<"24h" | "7d">("24h");
+  const [view, setView] = useState<View>("bots");
   if (!stats) {
     return <p style={{ color: "var(--text-dim)" }}>The usage breakdown is being prepared — it refreshes every 10 minutes.</p>;
   }
   const w = stats.windows[range];
+  const byId = Object.fromEntries(accounts.map((a) => [a.id, a]));
+  const views: { id: View; label: string; sub: string }[] = [
+    { id: "bots", label: "All bots & Codex CLI", sub: "everything on the 3 Codex accounts" },
+    ...(["codex-4", "codex-3", "codex-main"] as const).map((id) => ({
+      id,
+      label: byId[id]?.email ?? id,
+      sub: byId[id]?.role ?? "",
+    })),
+    { id: "claude", label: "Claude", sub: "Claude Code sessions" },
+  ];
+
   return (
-    <div style={{ display: "flex", flexDirection: "column", gap: 20 }}>
+    <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(170px, 1fr))", gap: 8 }}>
+        {views.map((v) => {
+          const on = view === v.id;
+          const acc = w.accounts?.[v.id];
+          return (
+            <button
+              key={v.id}
+              onClick={() => setView(v.id)}
+              aria-pressed={on}
+              style={{
+                textAlign: "left",
+                padding: "10px 12px",
+                fontFamily: "inherit",
+                cursor: "pointer",
+                background: on ? "var(--bg-elevated)" : "var(--bg-surface)",
+                border: `1px solid ${on ? "var(--accent)" : "var(--border)"}`,
+                color: "var(--text)",
+                minWidth: 0,
+              }}
+            >
+              <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                {v.id !== "bots" && <span style={{ width: 8, height: 8, borderRadius: 999, background: SERIES_COLORS[v.id], flex: "none" }} />}
+                <span style={{ fontSize: 12, fontWeight: 700, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{v.label}</span>
+              </div>
+              <div style={{ fontSize: 10, color: "var(--text-dim)", marginTop: 3 }}>
+                {acc ? `+${acc.rise}% of its week since ${fmtClock(w.watched_since)}` : v.sub}
+              </div>
+            </button>
+          );
+        })}
+      </div>
+
       <div style={{ display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
         <div role="group" aria-label="Time range" style={{ display: "inline-flex", border: "1px solid var(--border)" }}>
           {(["24h", "7d"] as const).map((r) => (
@@ -588,139 +651,288 @@ function UsingTab({ stats }: { stats: Stats | null }) {
           ))}
         </div>
         <span style={{ fontSize: 11, color: "var(--text-muted)" }}>
-          Dollar figures are what the usage would cost at public API prices — a yardstick for comparing, not a bill. Refreshed{" "}
-          {fmtIn(Date.now() / 1000 - stats.at)} ago.
+          $ = what the usage would cost at public API prices (a yardstick, not a bill). Refreshed {fmtIn(Date.now() / 1000 - stats.at)} ago.
         </span>
       </div>
 
-      <FamilyPanel
-        title="Codex accounts — the bots and Codex CLI"
-        rows={w.codex}
-        total={w.codex_total}
-        cal={stats.calibration.codex}
-        calNote="of one account's weekly limit (3 accounts = 300%)"
-        hourly={stats.hourly.codex}
-        runs={stats.top_runs.codex}
-        runsTitle="Heaviest single runs, last 24 hours"
-        unit="calls"
-      />
-      <FamilyPanel
-        title="Claude account — Claude Code sessions"
-        rows={w.claude}
-        total={w.claude_total}
-        cal={stats.calibration.claude}
-        calNote="of the weekly limit"
-        hourly={stats.hourly.claude}
-        hourlyTitle="By model, per 3 hours"
-        runs={stats.top_runs.claude}
-        runsTitle="Heaviest sessions, last 24 hours"
-        extra={w.claude_models}
-        extraTitle="By model"
-        unit="replies"
-      />
+      {view === "bots" && <BotsView w={w} stats={stats} />}
+      {(view === "codex-4" || view === "codex-3" || view === "codex-main") && (
+        <AccountView acct={w.accounts?.[view]} name={byId[view]?.email ?? view} since={w.watched_since} range={range} />
+      )}
+      {view === "claude" && <ClaudeView w={w} stats={stats} since={w.watched_since} range={range} />}
     </div>
   );
 }
 
-function FamilyPanel(props: {
-  title: string;
-  rows: Row[];
-  total: number;
-  cal: Cal;
-  calNote: string;
-  hourly: { hours: number[]; series: Record<string, number[]> };
-  hourlyTitle?: string;
-  runs: Run[];
-  runsTitle: string;
-  extra?: Row[];
-  extraTitle?: string;
-  unit: string;
-}) {
-  const { title, rows, total, cal, calNote } = props;
-  const [all, setAll] = useState(false);
-  const shown = all ? rows : rows.slice(0, 10);
+function fmtClock(ts: number) {
+  const d = new Date(ts * 1000);
+  const today = new Date();
+  const time = d.toLocaleTimeString(undefined, { hour: "2-digit", minute: "2-digit" });
+  return d.toDateString() === today.toDateString() ? time : `${d.toLocaleDateString(undefined, { day: "numeric", month: "short" })} ${time}`;
+}
+
+function Panel({ title, sub, children }: { title: string; sub?: React.ReactNode; children: React.ReactNode }) {
   return (
     <section style={{ background: "var(--bg-surface)", border: "1px solid var(--border)", padding: 18, minWidth: 0 }}>
       <div style={{ fontSize: 14, fontWeight: 700, marginBottom: 6 }}>{title}</div>
-      <div style={{ fontSize: 12, color: "var(--text-dim)", marginBottom: 16, lineHeight: 1.6 }}>
-        {fmtDollars(total)} of usage at API prices.{" "}
-        {cal
-          ? `That is about ${Math.round(total * cal.pct_per_dollar)}% ${calNote}.`
-          : "The “% of weekly limit” estimate appears once the monitor has watched the accounts for 6 hours."}
-      </div>
+      {sub && <div style={{ fontSize: 12, color: "var(--text-dim)", marginBottom: 16, lineHeight: 1.6 }}>{sub}</div>}
+      {children}
+    </section>
+  );
+}
 
-      {rows.length === 0 && <div style={{ fontSize: 12, color: "var(--text-muted)" }}>No usage in this period.</div>}
+function ShareRow({
+  name,
+  tag,
+  share,
+  right,
+  onClick,
+  open,
+  indent,
+}: {
+  name: string;
+  tag?: string;
+  share: number;
+  right: string;
+  onClick?: () => void;
+  open?: boolean;
+  indent?: boolean;
+}) {
+  return (
+    <div
+      onClick={onClick}
+      role={onClick ? "button" : undefined}
+      tabIndex={onClick ? 0 : undefined}
+      onKeyDown={(e) => {
+        if (onClick && (e.key === "Enter" || e.key === " ")) {
+          e.preventDefault();
+          onClick();
+        }
+      }}
+      style={{ minWidth: 0, cursor: onClick ? "pointer" : "default", paddingLeft: indent ? 18 : 0 }}
+    >
+      <div style={{ display: "flex", alignItems: "baseline", gap: 8, marginBottom: 4, flexWrap: "wrap" }}>
+        {onClick && <span style={{ fontSize: 10, color: "var(--text-dim)", width: 10 }}>{open ? "▾" : "▸"}</span>}
+        <span style={{ fontSize: indent ? 11 : 12, fontWeight: indent ? 500 : 600, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", maxWidth: "100%" }}>
+          {name}
+        </span>
+        {tag && <span style={{ fontSize: 10, color: "var(--text-muted)" }}>{tag}</span>}
+        <span style={{ marginLeft: "auto", fontSize: 11, color: "var(--text-dim)", whiteSpace: "nowrap" }}>{right}</span>
+      </div>
+      <div style={{ height: indent ? 4 : 6, background: "var(--bg-elevated)", borderRadius: 3 }}>
+        <div
+          style={{
+            width: `${Math.max(0.5, Math.min(100, share))}%`,
+            height: "100%",
+            background: indent ? "#6da7ec" : "#3987e5",
+            borderRadius: 3,
+          }}
+        />
+      </div>
+    </div>
+  );
+}
+
+const KIND_TEXT: Record<string, string> = {
+  cli: "script",
+  cron: "scheduled",
+  discord: "Discord",
+  subagent: "helper agents",
+  tool: "app-triggered",
+  api_server: "app request",
+};
+
+function BotsView({ w, stats }: { w: Stats["windows"]["24h"]; stats: Stats }) {
+  const [open, setOpen] = useState<string | null>(null);
+  const [all, setAll] = useState(false);
+  const rows = w.bots;
+  const shown = all ? rows : rows.slice(0, 12);
+  return (
+    <>
+      <Panel
+        title="Who used the Codex accounts"
+        sub={
+          <>
+            {fmtDollars(w.codex_total)} of usage across the three Codex accounts. Click a bot to see its jobs and tasks.
+            {rows.some((r) => typeof r.pct_of_week === "number") &&
+              ` “≈% of a week” adds up what each bot moved the account meters since ${fmtClock(w.watched_since)} (one account's full week = 100%).`}
+          </>
+        }
+      >
+        <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+          {shown.map((r) => {
+            const tasks = w.tasks?.[r.name];
+            const isOpen = open === r.name;
+            return (
+              <div key={r.name} style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+                <ShareRow
+                  name={r.name}
+                  tag={r.group}
+                  share={r.share}
+                  open={isOpen}
+                  onClick={tasks ? () => setOpen(isOpen ? null : r.name) : undefined}
+                  right={[
+                    `${r.share.toFixed(r.share < 1 ? 1 : 0)}%`,
+                    fmtDollars(r.dollars),
+                    typeof r.pct_of_week === "number" ? `≈${r.pct_of_week < 1 ? "<1" : Math.round(r.pct_of_week)}% of a week` : "",
+                    r.runs ? `${r.runs.toLocaleString()} runs` : r.calls ? `${r.calls.toLocaleString()} replies` : "",
+                  ]
+                    .filter(Boolean)
+                    .join(" · ")}
+                />
+                {isOpen && tasks && (
+                  <div style={{ display: "flex", flexDirection: "column", gap: 8, borderLeft: "1px solid var(--border)", marginLeft: 4, padding: "4px 0 8px" }}>
+                    {tasks.map((t) => (
+                      <ShareRow
+                        key={t.name}
+                        indent
+                        name={t.name}
+                        tag={t.kind ? t.kind.split(", ").map((k) => KIND_TEXT[k] ?? k).join(", ") : undefined}
+                        share={t.share}
+                        right={`${t.share.toFixed(t.share < 1 ? 1 : 0)}% of ${r.name} · ${fmtDollars(t.dollars)} · ${t.runs ?? 0} runs`}
+                      />
+                    ))}
+                  </div>
+                )}
+              </div>
+            );
+          })}
+        </div>
+        {rows.length > 12 && (
+          <button
+            onClick={() => setAll(!all)}
+            style={{ marginTop: 12, fontSize: 11, fontFamily: "inherit", background: "none", border: "none", color: "var(--accent)", cursor: "pointer", padding: 0 }}
+          >
+            {all ? "Show top 12" : `Show all ${rows.length}`}
+          </button>
+        )}
+        <StackedHourly data={stats.hourly.codex} title="Who used it, per 3 hours (last 7 days)" />
+      </Panel>
+      <RunsPanel title="Heaviest single runs, last 24 hours" runs={stats.top_runs.codex} unit="calls" />
+    </>
+  );
+}
+
+function AccountView({ acct, name, since, range }: { acct?: { rise: number; rows: AcctRow[]; watched_hours: number }; name: string; since: number; range: string }) {
+  if (!acct) return <Panel title={name} sub="No data for this account yet." children={null} />;
+  const rows = acct.rows;
+  const maxPct = Math.max(1e-9, ...rows.map((r) => r.pct));
+  return (
+    <Panel
+      title={`What used ${name}`}
+      sub={
+        <>
+          Its weekly meter rose <b style={{ color: "var(--text)" }}>{acct.rise}%</b> since {fmtClock(since)}
+          {range === "7d" ? " (the monitor started then)" : ""}. Each hour, bot usage is given to the account whose meter moved, then
+          that rise is split by how much each bot used — an estimate, since the bots don&apos;t record which account served them.
+        </>
+      }
+    >
+      {rows.length === 0 && <div style={{ fontSize: 12, color: "var(--text-muted)" }}>Nothing moved this account&apos;s meter in this period.</div>}
       <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
-        {shown.map((r) => (
-          <div key={r.name} style={{ minWidth: 0 }}>
-            <div style={{ display: "flex", alignItems: "baseline", gap: 8, marginBottom: 4, flexWrap: "wrap" }}>
-              <span style={{ fontSize: 12, fontWeight: 600, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", maxWidth: "100%" }}>
-                {r.name}
+        {rows.map((r) => (
+          <ShareRow
+            key={r.name}
+            name={r.name}
+            tag={r.name === "Not seen on this server" ? "used somewhere else — another computer, the Codex app or ChatGPT" : undefined}
+            share={(r.pct / maxPct) * 100}
+            right={`≈${r.pct < 0.1 ? "<0.1" : r.pct.toFixed(1)}% of its week${r.dollars ? ` · ${fmtDollars(r.dollars)}` : ""}`}
+          />
+        ))}
+      </div>
+    </Panel>
+  );
+}
+
+function ClaudeView({ w, stats, since, range }: { w: Stats["windows"]["24h"]; stats: Stats; since: number; range: string }) {
+  const [all, setAll] = useState(false);
+  const acct = w.accounts?.claude;
+  const rows = w.claude;
+  const shown = all ? rows : rows.slice(0, 12);
+  return (
+    <>
+      <Panel
+        title="What used Claude"
+        sub={
+          <>
+            {fmtDollars(w.claude_total)} of Claude Code usage, one row per session (by topic; helper agents count under their session).
+            {acct ? ` Claude's weekly meter rose ${acct.rise}% since ${fmtClock(since)}${range === "7d" ? " (the monitor started then)" : ""}.` : ""}
+          </>
+        }
+      >
+        <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+          {shown.map((r) => (
+            <ShareRow
+              key={r.name}
+              name={r.name}
+              tag={r.group && r.group !== "Home folder (general)" ? r.group : undefined}
+              share={r.share}
+              right={[
+                `${r.share.toFixed(r.share < 1 ? 1 : 0)}%`,
+                fmtDollars(r.dollars),
+                typeof r.pct_of_week === "number" && r.pct_of_week > 0 ? `≈${r.pct_of_week < 1 ? "<1" : Math.round(r.pct_of_week)}% of the week` : "",
+                r.calls ? `${r.calls.toLocaleString()} replies` : "",
+              ]
+                .filter(Boolean)
+                .join(" · ")}
+            />
+          ))}
+        </div>
+        {rows.length > 12 && (
+          <button
+            onClick={() => setAll(!all)}
+            style={{ marginTop: 12, fontSize: 11, fontFamily: "inherit", background: "none", border: "none", color: "var(--accent)", cursor: "pointer", padding: 0 }}
+          >
+            {all ? "Show top 12" : `Show all ${rows.length}`}
+          </button>
+        )}
+        {acct && acct.rows.some((r) => r.name === "Not seen on this server") && (
+          <div style={{ fontSize: 11, color: "var(--amber)", marginTop: 12 }}>
+            ▲ Part of Claude&apos;s meter moved while nothing on this server was running — usage from claude.ai or another computer.
+          </div>
+        )}
+        {w.claude_models.length > 0 && (
+          <div style={{ marginTop: 20 }}>
+            <div style={{ fontSize: 11, color: "var(--text-dim)", textTransform: "uppercase", letterSpacing: "0.08em", marginBottom: 8 }}>By model</div>
+            <div style={{ display: "flex", flexWrap: "wrap", gap: "6px 18px", fontSize: 12 }}>
+              {w.claude_models.map((r) => (
+                <span key={r.name}>
+                  {r.name} <b>{r.share.toFixed(0)}%</b> <span style={{ color: "var(--text-muted)" }}>({fmtDollars(r.dollars)})</span>
+                </span>
+              ))}
+            </div>
+          </div>
+        )}
+        <StackedHourly data={stats.hourly.claude} title="By model, per 3 hours (last 7 days)" />
+      </Panel>
+      <RunsPanel title="Heaviest sessions, last 24 hours" runs={stats.top_runs.claude} unit="replies" />
+    </>
+  );
+}
+
+function RunsPanel({ title, runs, unit }: { title: string; runs: Run[]; unit: string }) {
+  return (
+    <Panel title={title}>
+      {runs.length === 0 && <div style={{ fontSize: 12, color: "var(--text-muted)" }}>None.</div>}
+      <div style={{ display: "flex", flexDirection: "column" }}>
+        {runs.map((r, i) => (
+          <div key={i} style={{ display: "flex", gap: 10, alignItems: "baseline", padding: "7px 0", borderTop: i ? "1px solid var(--border)" : "none", minWidth: 0 }}>
+            <span style={{ fontSize: 12, fontWeight: 700, width: 64, flex: "none", textAlign: "right" }}>{fmtDollars(r.dollars)}</span>
+            <span style={{ minWidth: 0, flex: 1 }}>
+              <span style={{ fontSize: 12, fontWeight: 600 }}>{r.who}</span>
+              <span style={{ fontSize: 11, color: "var(--text-dim)" }}>
+                {r.task ? ` · ${r.task}` : ""}
+                {r.at ? ` · ${fmtWhen(r.at)}` : ""}
+                {r.calls ? ` · ${r.calls} ${unit}` : ""}
               </span>
-              {r.group && r.group !== "Home folder (general)" && (
-                <span style={{ fontSize: 10, color: "var(--text-muted)" }}>{r.group}</span>
+              {r.what && (
+                <div style={{ fontSize: 11, color: "var(--text-muted)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{r.what}</div>
               )}
-              <span style={{ marginLeft: "auto", fontSize: 11, color: "var(--text-dim)", whiteSpace: "nowrap" }}>
-                <b style={{ color: "var(--text)" }}>{r.share.toFixed(r.share < 1 ? 1 : 0)}%</b> · {fmtDollars(r.dollars)}
-                {typeof r.pct_of_week === "number" ? ` · ≈${r.pct_of_week < 1 ? "<1" : Math.round(r.pct_of_week)}% of a week` : ""}
-                {r.calls ? ` · ${r.calls.toLocaleString()} ${props.unit}` : ""}
-              </span>
-            </div>
-            <div style={{ height: 6, background: "var(--bg-elevated)", borderRadius: 3 }}>
-              <div style={{ width: `${Math.max(0.5, Math.min(100, r.share))}%`, height: "100%", background: "#3987e5", borderRadius: 3 }} />
-            </div>
+            </span>
           </div>
         ))}
       </div>
-      {rows.length > 10 && (
-        <button
-          onClick={() => setAll(!all)}
-          style={{ marginTop: 12, fontSize: 11, fontFamily: "inherit", background: "none", border: "none", color: "var(--accent)", cursor: "pointer", padding: 0 }}
-        >
-          {all ? "Show top 10" : `Show all ${rows.length}`}
-        </button>
-      )}
-
-      {props.extra && props.extra.length > 0 && (
-        <div style={{ marginTop: 20 }}>
-          <div style={{ fontSize: 11, color: "var(--text-dim)", textTransform: "uppercase", letterSpacing: "0.08em", marginBottom: 8 }}>{props.extraTitle}</div>
-          <div style={{ display: "flex", flexWrap: "wrap", gap: "6px 18px", fontSize: 12 }}>
-            {props.extra.map((r) => (
-              <span key={r.name}>
-                {r.name} <b>{r.share.toFixed(0)}%</b> <span style={{ color: "var(--text-muted)" }}>({fmtDollars(r.dollars)})</span>
-              </span>
-            ))}
-          </div>
-        </div>
-      )}
-
-      <StackedHourly data={props.hourly} title={props.hourlyTitle ?? "Who used it, per 3 hours (last 7 days)"} />
-
-      <div style={{ marginTop: 20 }}>
-        <div style={{ fontSize: 11, color: "var(--text-dim)", textTransform: "uppercase", letterSpacing: "0.08em", marginBottom: 8 }}>{props.runsTitle}</div>
-        {props.runs.length === 0 && <div style={{ fontSize: 12, color: "var(--text-muted)" }}>None.</div>}
-        <div style={{ display: "flex", flexDirection: "column" }}>
-          {props.runs.map((r, i) => (
-            <div
-              key={i}
-              style={{ display: "flex", gap: 10, alignItems: "baseline", padding: "7px 0", borderTop: i ? "1px solid var(--border)" : "none", minWidth: 0 }}
-            >
-              <span style={{ fontSize: 12, fontWeight: 700, width: 64, flex: "none", textAlign: "right" }}>{fmtDollars(r.dollars)}</span>
-              <span style={{ minWidth: 0, flex: 1 }}>
-                <span style={{ fontSize: 12, fontWeight: 600 }}>{r.who}</span>
-                <span style={{ fontSize: 11, color: "var(--text-dim)" }}>
-                  {r.at ? ` · ${fmtWhen(r.at)}` : ""}
-                  {r.calls ? ` · ${r.calls} ${props.unit}` : ""}
-                </span>
-                <div style={{ fontSize: 11, color: "var(--text-muted)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-                  {r.what || "—"}
-                </div>
-              </span>
-            </div>
-          ))}
-        </div>
-      </div>
-    </section>
+    </Panel>
   );
 }
 
