@@ -254,6 +254,25 @@ export default function Dashboard() {
         <div style={{ display: "flex", alignItems: "center", gap: 14 }}>
           {isAdmin && (
             <a
+              href="/usage"
+              style={{
+                fontSize: 10,
+                fontWeight: 600,
+                letterSpacing: "0.1em",
+                textTransform: "uppercase",
+                padding: "5px 10px",
+                background: "transparent",
+                border: "1px solid var(--border)",
+                color: "var(--text-dim)",
+                textDecoration: "none",
+                fontFamily: "inherit",
+              }}
+            >
+              Usage
+            </a>
+          )}
+          {isAdmin && (
+            <a
               href="/status"
               style={{
                 fontSize: 10,
