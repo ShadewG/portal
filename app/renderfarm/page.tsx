@@ -61,6 +61,19 @@ function deliveredPath(detail: string): string | null {
 type Render = { path: string; name: string; episode: string; kind: string; timestamp: string; alpha: boolean };
 const fileName = (p: string) => p.split("/").pop() || p;
 
+/**
+ * Output video of a finished render (DONE or DONE-WITH-NOTES line), for the Review / Share link
+ * buttons. Wider than deliveredPath: previews only handle .mp4/.mov, Video Review takes more.
+ */
+function reviewablePath(type: string, detail: string): string | null {
+  if (type !== "DONE" && type !== "DONE-WITH-NOTES") return null;
+  const m = String(detail || "").match(/-> (\/Insanity\/.+?\.(?:mp4|mov|mxf|m4v))(?=\s|$)/i);
+  return m ? m[1] : null;
+}
+/** FOIA Sorter Video Review for a farm render; share=true opens its Share dialog with a guest link. */
+const reviewUrl = (path: string, share = false) =>
+  `https://foiasorter.insanity.team/review/open?dropbox_path=${encodeURIComponent(path)}&from=renderfarm${share ? "&share=1" : ""}`;
+
 function fmtDuration(s: number | null | undefined): string {
   if (s == null) return "—";
   if (s < 60) return `${s}s`;
@@ -93,6 +106,22 @@ const btn = (tone: "normal" | "danger" | "primary" = "normal"): CSSProperties =>
   color: tone === "danger" ? "var(--red)" : tone === "primary" ? "#fff" : "var(--text)",
   border: `1px solid ${tone === "danger" ? "var(--red)" : tone === "primary" ? "var(--accent)" : "var(--border-bright)"}`,
 });
+
+/** "Review" and "Share link" for one output video; both open FOIA Sorter Video Review in a new tab. */
+function ReviewLinks({ path, small = false }: { path: string; small?: boolean }) {
+  if (!/\.(mp4|mov|mxf|m4v)$/i.test(path)) return null;
+  const style: CSSProperties = { ...btn(), textDecoration: "none", display: "inline-block", lineHeight: "normal", ...(small ? { padding: "1px 6px", fontSize: 10 } : {}) };
+  return (
+    <>
+      <a href={reviewUrl(path)} target="_blank" rel="noopener noreferrer" style={style} title="Open this render in Video Review">
+        Review
+      </a>
+      <a href={reviewUrl(path, true)} target="_blank" rel="noopener noreferrer" style={style} title="Open Video Review with a ready guest link to copy">
+        Share link
+      </a>
+    </>
+  );
+}
 
 function stateTone(state: string): string {
   if (state === "Running") return "var(--green)";
@@ -335,26 +364,35 @@ export default function RenderFarmPage() {
               <section style={card}>
                 <p style={label}>Recent activity</p>
                 <ul style={{ listStyle: "none", margin: 0, padding: 0, display: "grid", gap: 6, maxHeight: 420, overflowY: "auto" }}>
-                  {data.history.slice(0, 30).map((h, i) => (
+                  {data.history.slice(0, 30).map((h, i) => {
+                    const playable = h.type === "DONE" ? deliveredPath(h.detail) : null;
+                    const output = reviewablePath(h.type, h.detail);
+                    return (
                     <li key={i} style={{ fontSize: 12, display: "grid", gridTemplateColumns: "64px 1fr", gap: 8 }}>
                       <span style={{ color: "var(--text-muted)" }}>{fmtDay(h.timestamp)}</span>
                       <span>
                         <span style={{ color: h.type === "FAIL" ? "var(--red)" : h.type === "DONE" ? "var(--green)" : "var(--text-dim)", fontWeight: 600 }}>{h.label}</span>{" "}
                         <span style={{ wordBreak: "break-all" }}>{h.name}</span>
-                        {h.type === "DONE" && deliveredPath(h.detail) && (
-                          <button
-                            style={{ ...btn(), padding: "1px 6px", marginLeft: 6, fontSize: 10 }}
-                            onClick={() => { const p = deliveredPath(h.detail)!; setPlaying(renders.find((r) => r.path === p) ?? { path: p, name: h.name, episode: h.episode, kind: h.kind, timestamp: h.timestamp, alpha: /\.mov$/i.test(p) }); }}
-                          >
-                            ▶ Play
-                          </button>
+                        {(playable || output) && (
+                          <span style={{ display: "inline-flex", flexWrap: "wrap", gap: 6, marginLeft: 6, verticalAlign: "middle" }}>
+                            {playable && (
+                              <button
+                                style={{ ...btn(), padding: "1px 6px", fontSize: 10 }}
+                                onClick={() => setPlaying(renders.find((r) => r.path === playable) ?? { path: playable, name: h.name, episode: h.episode, kind: h.kind, timestamp: h.timestamp, alpha: /\.mov$/i.test(playable) })}
+                              >
+                                ▶ Play
+                              </button>
+                            )}
+                            {output && <ReviewLinks path={output} small />}
+                          </span>
                         )}
                         {h.type === "FAIL" && (
                           <div style={{ color: "var(--text-dim)", fontSize: 11, wordBreak: "break-word" }}>{reasonText(h.detail)}</div>
                         )}
                       </span>
                     </li>
-                  ))}
+                    );
+                  })}
                 </ul>
               </section>
 
@@ -394,29 +432,34 @@ export default function RenderFarmPage() {
 function RenderTile({ r, onPlay }: { r: Render; onPlay: () => void }) {
   const [broken, setBroken] = useState(false);
   return (
-    <button
-      onClick={onPlay}
-      title={r.path}
-      style={{ all: "unset", cursor: "pointer", display: "grid", gap: 6, minWidth: 0 }}
-    >
-      <span style={{ position: "relative", display: "block", aspectRatio: "16 / 9", background: "var(--bg-elevated)", border: "1px solid var(--border)", overflow: "hidden" }}>
-        {!broken && (
-          // eslint-disable-next-line @next/next/no-img-element
-          <img
-            src={`/api/renderfarm/poster?path=${encodeURIComponent(r.path)}`}
-            alt=""
-            loading="lazy"
-            onError={() => setBroken(true)}
-            style={{ width: "100%", height: "100%", objectFit: "cover", display: "block" }}
-          />
-        )}
-        {broken && <span style={{ position: "absolute", inset: 0, display: "grid", placeItems: "center", fontSize: 11, color: "var(--text-muted)" }}>No thumbnail</span>}
-        <span style={{ position: "absolute", left: 8, bottom: 8, width: 30, height: 30, borderRadius: "50%", background: "rgba(0,0,0,.65)", display: "grid", placeItems: "center", color: "#fff", fontSize: 12 }}>▶</span>
-        {r.alpha && <span style={{ position: "absolute", right: 6, top: 6, fontSize: 9, fontWeight: 700, letterSpacing: "0.08em", padding: "2px 5px", background: "rgba(0,0,0,.65)", color: "#fff" }}>ALPHA</span>}
+    <div style={{ display: "grid", gap: 6, minWidth: 0, alignContent: "start" }}>
+      <button
+        onClick={onPlay}
+        title={r.path}
+        style={{ all: "unset", cursor: "pointer", display: "grid", gap: 6, minWidth: 0 }}
+      >
+        <span style={{ position: "relative", display: "block", aspectRatio: "16 / 9", background: "var(--bg-elevated)", border: "1px solid var(--border)", overflow: "hidden" }}>
+          {!broken && (
+            // eslint-disable-next-line @next/next/no-img-element
+            <img
+              src={`/api/renderfarm/poster?path=${encodeURIComponent(r.path)}`}
+              alt=""
+              loading="lazy"
+              onError={() => setBroken(true)}
+              style={{ width: "100%", height: "100%", objectFit: "cover", display: "block" }}
+            />
+          )}
+          {broken && <span style={{ position: "absolute", inset: 0, display: "grid", placeItems: "center", fontSize: 11, color: "var(--text-muted)" }}>No thumbnail</span>}
+          <span style={{ position: "absolute", left: 8, bottom: 8, width: 30, height: 30, borderRadius: "50%", background: "rgba(0,0,0,.65)", display: "grid", placeItems: "center", color: "#fff", fontSize: 12 }}>▶</span>
+          {r.alpha && <span style={{ position: "absolute", right: 6, top: 6, fontSize: 9, fontWeight: 700, letterSpacing: "0.08em", padding: "2px 5px", background: "rgba(0,0,0,.65)", color: "#fff" }}>ALPHA</span>}
+        </span>
+        <span style={{ fontSize: 12, fontWeight: 600, color: "var(--text)", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{fileName(r.path)}</span>
+        <span style={{ fontSize: 11, color: "var(--text-dim)" }}>{r.episode} · {r.kind} · {fmtDay(r.timestamp)}</span>
+      </button>
+      <span style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
+        <ReviewLinks path={r.path} small />
       </span>
-      <span style={{ fontSize: 12, fontWeight: 600, color: "var(--text)", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{fileName(r.path)}</span>
-      <span style={{ fontSize: 11, color: "var(--text-dim)" }}>{r.episode} · {r.kind} · {fmtDay(r.timestamp)}</span>
-    </button>
+    </div>
   );
 }
 
@@ -449,7 +492,10 @@ function Player({ r, onClose }: { r: Render; onClose: () => void }) {
         <div style={{ display: "flex", gap: 10, alignItems: "baseline", flexWrap: "wrap" }}>
           <span style={{ fontSize: 14, fontWeight: 700, wordBreak: "break-all" }}>{fileName(r.path)}</span>
           <span style={{ fontSize: 11, color: "var(--text-dim)" }}>{r.episode} · {r.kind} · {fmtDay(r.timestamp)}</span>
-          <button style={{ ...btn(), marginLeft: "auto" }} onClick={onClose}>Close</button>
+          <span style={{ marginLeft: "auto", display: "inline-flex", flexWrap: "wrap", gap: 8 }}>
+            <ReviewLinks path={r.path} />
+            <button style={btn()} onClick={onClose}>Close</button>
+          </span>
         </div>
         <div style={{ background: "#000", aspectRatio: "16 / 9", display: "grid", placeItems: "center" }}>
           {media?.ready && media.url ? (
