@@ -2,7 +2,10 @@ import NextAuth from "next-auth";
 import Discord from "next-auth/providers/discord";
 
 export const { handlers, signIn, signOut, auth } = NextAuth({
-  providers: [Discord],
+  // Discord now adds the RFC 9207 "iss" parameter to its OAuth callback. With no issuer set,
+  // Auth.js checks it against its "https://authjs.dev" placeholder and fails the sign-in
+  // ("unexpected iss", 11-12 Oct 2026). https://discord.com is Discord's published issuer.
+  providers: [Discord({ issuer: "https://discord.com" })],
   session: {
     strategy: "jwt",
     maxAge: 365 * 24 * 60 * 60,
