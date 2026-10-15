@@ -19,6 +19,7 @@ export async function permittedAppIds(
       if (gate) return discordId === gate && hasAppAccess;
       if (app.id === CASES_DASHBOARD_APP_ID) return isCasesDashboardAllowed(user);
       if (app.id === FRONTWIND_DUBBING_APP_ID) return hasAppAccess && isFrontwindDubbingAllowed(user);
+      if (app.requireExplicitGrant) return hasAppAccess;
       return Boolean(app.allowAnyAuthenticatedUser) || dbUser.isAdmin || hasAppAccess;
     })
     .map((app) => app.id);

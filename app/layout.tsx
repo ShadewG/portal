@@ -12,7 +12,8 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
     <html lang="en">
       <body>
         <SessionProvider>{children}</SessionProvider>
-      </body>
+      <script async id="insanity-workspace" src="https://portal.insanity.team/workspace/shell.js?v=1" data-app="portal"></script>
+</body>
     </html>
   );
 }

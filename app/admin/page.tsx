@@ -419,12 +419,13 @@ export default function AdminPage() {
                       </div>
                     </td>
                     {allApps.map((app) => {
-                      const granted = user.isAdmin || user.access[app.id];
+                      const implicitAdmin = user.isAdmin && !app.requireExplicitGrant;
+                      const granted = implicitAdmin || user.access[app.id];
                       const key = `${user.id}:${app.id}`;
                       const isToggling = toggling === key;
                       return (
                         <td key={app.id} style={{ ...tdStyle, textAlign: "center" }}>
-                          {user.isAdmin ? (
+                          {implicitAdmin ? (
                             <span style={{ color: "var(--amber)", fontSize: 14 }} title="Admin (full access)">
                               ★
                             </span>
