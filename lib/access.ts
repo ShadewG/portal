@@ -2,6 +2,7 @@ import { prisma } from "@/lib/db";
 import { allApps } from "@/lib/apps";
 import { FRONTWIND_DUBBING_APP_ID, isFrontwindDubbingAllowed } from "@/lib/frontwindAccess";
 import { CASES_DASHBOARD_APP_ID, isCasesDashboardAllowed } from "@/lib/casesAccess";
+import { RENDER_FARM_APP_ID, isRenderFarmViewer } from "@/lib/renderfarmAccess";
 
 /** The app ids this user may open — the same rules /api/me answers with, as a list.
  *  Desk receives it in its handoff token so it can show each person only their own tools. */
@@ -19,6 +20,7 @@ export async function permittedAppIds(
       if (gate) return discordId === gate && hasAppAccess;
       if (app.id === CASES_DASHBOARD_APP_ID) return isCasesDashboardAllowed(user);
       if (app.id === FRONTWIND_DUBBING_APP_ID) return hasAppAccess && isFrontwindDubbingAllowed(user);
+      if (app.id === RENDER_FARM_APP_ID) return isRenderFarmViewer(dbUser.isAdmin, granted);
       if (app.requireExplicitGrant) return hasAppAccess;
       return Boolean(app.allowAnyAuthenticatedUser) || dbUser.isAdmin || hasAppAccess;
     })

@@ -2,7 +2,7 @@ import { createReadStream } from "node:fs";
 import { stat } from "node:fs/promises";
 import { Readable } from "node:stream";
 import { auth } from "@/auth";
-import { actorOf, canUseRenderFarm } from "@/lib/renderfarm";
+import { actorOf, renderFarmAccess } from "@/lib/renderfarm";
 import { alphaPreview, isAlpha, isDeliveredPath } from "@/lib/renderfarm-media";
 
 export const dynamic = "force-dynamic";
@@ -10,7 +10,7 @@ export const dynamic = "force-dynamic";
 /** GET /api/renderfarm/media/file?path=… — the cached browser copy of an alpha render, with Range support. */
 export async function GET(req: Request) {
   const session = await auth();
-  if (!(await canUseRenderFarm(session))) return Response.json({ error: "Forbidden" }, { status: 403 });
+  if (!(await renderFarmAccess(session)).view) return Response.json({ error: "Forbidden" }, { status: 403 });
   const p = new URL(req.url).searchParams.get("path") || "";
   if (!isAlpha(p) || !(await isDeliveredPath(p, actorOf(session)))) return Response.json({ error: "Not a delivered render" }, { status: 404 });
   const state = await alphaPreview(p);

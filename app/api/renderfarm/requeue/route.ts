@@ -1,12 +1,15 @@
 import { auth } from "@/auth";
-import { actorOf, canUseRenderFarm, farmJson, farmRequest } from "@/lib/renderfarm";
+import { actorOf, farmJson, farmRequest, renderFarmAccess } from "@/lib/renderfarm";
 
 export const dynamic = "force-dynamic";
 
-/** POST /api/renderfarm/requeue {pageId, kind} — put a Failed card back in the render queue (admins + Render Farm grant). */
+/**
+ * POST /api/renderfarm/requeue {pageId, kind} — put a Failed card back in the render queue (admins + Render Farm grant only).
+ * Not "your own failed renders" for everyone (15 Oct 2026): the farm's rows do not say who queued a card.
+ */
 export async function POST(req: Request) {
   const session = await auth();
-  if (!(await canUseRenderFarm(session))) {
+  if (!(await renderFarmAccess(session)).control) {
     return Response.json({ error: "Forbidden" }, { status: 403 });
   }
   if (!(req.headers.get("content-type") || "").includes("application/json")) {

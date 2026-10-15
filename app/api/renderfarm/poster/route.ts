@@ -1,6 +1,6 @@
 import { readFile } from "node:fs/promises";
 import { auth } from "@/auth";
-import { actorOf, canUseRenderFarm } from "@/lib/renderfarm";
+import { actorOf, renderFarmAccess } from "@/lib/renderfarm";
 import { isDeliveredPath, posterFile } from "@/lib/renderfarm-media";
 
 export const dynamic = "force-dynamic";
@@ -8,7 +8,7 @@ export const dynamic = "force-dynamic";
 /** GET /api/renderfarm/poster?path=<Dropbox path of a delivered render> — a JPEG thumbnail. */
 export async function GET(req: Request) {
   const session = await auth();
-  if (!(await canUseRenderFarm(session))) return Response.json({ error: "Forbidden" }, { status: 403 });
+  if (!(await renderFarmAccess(session)).view) return Response.json({ error: "Forbidden" }, { status: 403 });
   const p = new URL(req.url).searchParams.get("path") || "";
   if (!(await isDeliveredPath(p, actorOf(session)))) return Response.json({ error: "Not a delivered render" }, { status: 404 });
   try {

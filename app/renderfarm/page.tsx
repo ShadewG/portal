@@ -32,8 +32,13 @@ type Live = {
   history: HistoryRow[];
   checks: Check[];
   host: Host;
+  /** Added by Portal: whether this person gets the farm controls (admins + Render Farm grant). */
+  viewer?: { canControl: boolean };
   error?: string;
 };
+
+/** Shown to people who can see the farm but not control it. */
+const ASK_FOR_CONTROLS = "To start, pause or re-queue renders, ask Samuel or Austin.";
 
 const STAGES: Record<string, string> = {
   starting: "Starting",
@@ -58,8 +63,23 @@ function deliveredPath(detail: string): string | null {
   const m = String(detail || "").match(/-> (\/Insanity\/.+?\.(?:mp4|mov))(?=\s|$)/i);
   return m ? m[1] : null;
 }
-type Render = { path: string; name: string; episode: string; kind: string; timestamp: string; alpha: boolean };
+type Render = { path: string; name: string; episode: string; kind: string; timestamp: string; alpha: boolean; by?: string | null };
 const fileName = (p: string) => p.split("/").pop() || p;
+
+/**
+ * Who asked for a finished render, when the farm's notes say so: its DONE-WITH-NOTES line, logged
+ * with the DONE line, reads "… as AE editor nick asked on the card." Most cards are queued in Notion
+ * and name nobody, so this is often unknown (shown as nothing, never guessed).
+ */
+function askedBy(done: HistoryRow, history: HistoryRow[]): string | null {
+  const at = Date.parse(done.timestamp);
+  const note = history.find(
+    (h) => h.type === "DONE-WITH-NOTES" && h.name === done.name && h.kind === done.kind && Math.abs(Date.parse(h.timestamp) - at) <= 60_000,
+  );
+  const m = note ? note.detail.match(/\bas ([^,.;:|'"\n]{1,60}?) asked on the card/) : null;
+  return m ? m[1].replace(/^AE editor\s+/i, "").trim() || null : null;
+}
+const meta = (r: Render) => `${r.episode} · ${r.kind} · ${fmtDay(r.timestamp)}${r.by ? ` · asked by ${r.by}` : ""}`;
 
 /**
  * Output video of a finished render (DONE or DONE-WITH-NOTES line), for the Review / Share link
@@ -190,11 +210,14 @@ export default function RenderFarmPage() {
   const state = data?.controls.state ?? "—";
   const cur = data?.current ?? null;
   const pct = cur?.progress?.percent ?? null;
+  // Farm controls: admins + Render Farm grant (enforced by the API too). Everyone else sees the page only.
+  const canControl = data?.viewer?.canControl === true;
+  const history = data?.history ?? [];
   // Newest first, one tile per delivered file (a card rendered twice lands as _v2, a new path).
   const renders: Render[] = [];
-  for (const h of data?.history ?? []) {
+  for (const h of history) {
     const p = h.type === "DONE" ? deliveredPath(h.detail) : null;
-    if (p && !renders.some((r) => r.path === p)) renders.push({ path: p, name: h.name, episode: h.episode, kind: h.kind, timestamp: h.timestamp, alpha: /\.mov$/i.test(p) });
+    if (p && !renders.some((r) => r.path === p)) renders.push({ path: p, name: h.name, episode: h.episode, kind: h.kind, timestamp: h.timestamp, alpha: /\.mov$/i.test(p), by: askedBy(h, history) });
   }
 
   function ControlButton({ action, text, tone = "normal", guarded = false }: { action: string; text: string; tone?: "normal" | "danger" | "primary"; guarded?: boolean }) {
@@ -229,7 +252,7 @@ export default function RenderFarmPage() {
       </header>
 
       <main style={{ maxWidth: 1180, margin: "0 auto", padding: "24px 16px 48px", display: "grid", gap: 16 }}>
-        {forbidden && <p style={{ color: "var(--text-dim)" }}>You do not have access to the Render Farm. Ask Samuel to grant it in Portal admin.</p>}
+        {forbidden && <p style={{ color: "var(--text-dim)" }}>You do not have access to the Render Farm. Ask Samuel for access in Portal.</p>}
         {!forbidden && !data && !error && <p style={{ color: "var(--text-dim)" }}>Connecting to the render farm…</p>}
         {!forbidden && !data && error && <p style={{ color: "var(--red)" }}>{error}</p>}
         {playing && <Player r={playing} onClose={closePlayer} />}
@@ -249,23 +272,27 @@ export default function RenderFarmPage() {
                   {(data.heartbeatAgeSeconds ?? 0) > 120 && state === "Running" && <span style={{ color: "var(--red)" }}> — poller may be stuck</span>}
                 </div>
               </div>
-              <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginLeft: "auto" }}>
-                {state === "Maintenance" ? (
-                  <ControlButton action="Resume" text="End maintenance" tone="primary" />
-                ) : state === "Running" || state === "Finishing current render" ? (
-                  <>
-                    {!data.controls.paused && <ControlButton action="Pause" text="Pause after current" />}
-                    {!cur && <ControlButton action="Stop" text="Stop farm" tone="danger" guarded />}
-                    <ControlButton action="Maintenance" text="Maintenance" tone="danger" guarded />
-                  </>
-                ) : (
-                  <>
-                    <ControlButton action="Start" text="Start farm" tone="primary" />
-                    <ControlButton action="Maintenance" text="Maintenance" tone="danger" guarded />
-                  </>
-                )}
-              </div>
-              {!data.controls.canControl && (
+              {canControl ? (
+                <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginLeft: "auto" }}>
+                  {state === "Maintenance" ? (
+                    <ControlButton action="Resume" text="End maintenance" tone="primary" />
+                  ) : state === "Running" || state === "Finishing current render" ? (
+                    <>
+                      {!data.controls.paused && <ControlButton action="Pause" text="Pause after current" />}
+                      {!cur && <ControlButton action="Stop" text="Stop farm" tone="danger" guarded />}
+                      <ControlButton action="Maintenance" text="Maintenance" tone="danger" guarded />
+                    </>
+                  ) : (
+                    <>
+                      <ControlButton action="Start" text="Start farm" tone="primary" />
+                      <ControlButton action="Maintenance" text="Maintenance" tone="danger" guarded />
+                    </>
+                  )}
+                </div>
+              ) : (
+                <p style={{ margin: "0 0 0 auto", fontSize: 11, color: "var(--text-muted)" }}>{ASK_FOR_CONTROLS}</p>
+              )}
+              {canControl && !data.controls.canControl && (
                 <p style={{ width: "100%", margin: 0, fontSize: 11, color: "var(--amber)" }}>Controls are disabled: this machine is not the primary render node.</p>
               )}
               {notice && <p style={{ width: "100%", margin: 0, fontSize: 12, color: notice.ok ? "var(--green)" : "var(--red)" }}>{notice.text}</p>}
@@ -281,9 +308,11 @@ export default function RenderFarmPage() {
                   <div style={{ display: "flex", gap: 12, flexWrap: "wrap", alignItems: "baseline" }}>
                     <span style={{ fontSize: 17, fontWeight: 700, wordBreak: "break-all" }}>{cur.name}</span>
                     <span style={{ fontSize: 11, color: "var(--text-dim)" }}>{cur.kind}{cur.format ? ` · ${cur.format}` : ""}</span>
-                    <span style={{ marginLeft: "auto" }}>
-                      <ControlButton action="Abort" text="Stop this render" tone="danger" guarded />
-                    </span>
+                    {canControl && (
+                      <span style={{ marginLeft: "auto" }}>
+                        <ControlButton action="Abort" text="Stop this render" tone="danger" guarded />
+                      </span>
+                    )}
                   </div>
                   <div style={{ fontSize: 12, color: "var(--text-dim)" }}>
                     {STAGES[cur.stage] || cur.stage} · running {fmtDuration(cur.elapsedSeconds)}
@@ -347,9 +376,11 @@ export default function RenderFarmPage() {
                         <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
                           <span style={{ color: "var(--text-muted)", minWidth: 44 }}>{c.episode}</span>
                           <a href={c.notionUrl} target="_blank" rel="noreferrer" style={{ color: "var(--text)", wordBreak: "break-all" }}>{c.name}</a>
-                          <button style={{ ...btn(), marginLeft: "auto", padding: "4px 8px" }} disabled={!!busy} onClick={() => requeue(c)}>
-                            {busy === key ? "…" : "Re-queue"}
-                          </button>
+                          {canControl && (
+                            <button style={{ ...btn(), marginLeft: "auto", padding: "4px 8px" }} disabled={!!busy} onClick={() => requeue(c)}>
+                              {busy === key ? "…" : "Re-queue"}
+                            </button>
+                          )}
                         </div>
                         {c.reason && <div style={{ color: "var(--text-dim)", fontSize: 11, paddingLeft: 52, wordBreak: "break-word" }}>{reasonText(c.reason)}</div>}
                       </li>
@@ -367,18 +398,20 @@ export default function RenderFarmPage() {
                   {data.history.slice(0, 30).map((h, i) => {
                     const playable = h.type === "DONE" ? deliveredPath(h.detail) : null;
                     const output = reviewablePath(h.type, h.detail);
+                    const by = h.type === "DONE" ? askedBy(h, history) : null;
                     return (
                     <li key={i} style={{ fontSize: 12, display: "grid", gridTemplateColumns: "64px 1fr", gap: 8 }}>
                       <span style={{ color: "var(--text-muted)" }}>{fmtDay(h.timestamp)}</span>
                       <span>
                         <span style={{ color: h.type === "FAIL" ? "var(--red)" : h.type === "DONE" ? "var(--green)" : "var(--text-dim)", fontWeight: 600 }}>{h.label}</span>{" "}
                         <span style={{ wordBreak: "break-all" }}>{h.name}</span>
+                        {by && <span style={{ color: "var(--text-muted)" }}> · asked by {by}</span>}
                         {(playable || output) && (
                           <span style={{ display: "inline-flex", flexWrap: "wrap", gap: 6, marginLeft: 6, verticalAlign: "middle" }}>
                             {playable && (
                               <button
                                 style={{ ...btn(), padding: "1px 6px", fontSize: 10 }}
-                                onClick={() => setPlaying(renders.find((r) => r.path === playable) ?? { path: playable, name: h.name, episode: h.episode, kind: h.kind, timestamp: h.timestamp, alpha: /\.mov$/i.test(playable) })}
+                                onClick={() => setPlaying(renders.find((r) => r.path === playable) ?? { path: playable, name: h.name, episode: h.episode, kind: h.kind, timestamp: h.timestamp, alpha: /\.mov$/i.test(playable), by })}
                               >
                                 ▶ Play
                               </button>
@@ -454,7 +487,7 @@ function RenderTile({ r, onPlay }: { r: Render; onPlay: () => void }) {
           {r.alpha && <span style={{ position: "absolute", right: 6, top: 6, fontSize: 9, fontWeight: 700, letterSpacing: "0.08em", padding: "2px 5px", background: "rgba(0,0,0,.65)", color: "#fff" }}>ALPHA</span>}
         </span>
         <span style={{ fontSize: 12, fontWeight: 600, color: "var(--text)", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{fileName(r.path)}</span>
-        <span style={{ fontSize: 11, color: "var(--text-dim)" }}>{r.episode} · {r.kind} · {fmtDay(r.timestamp)}</span>
+        <span style={{ fontSize: 11, color: "var(--text-dim)" }}>{meta(r)}</span>
       </button>
       <span style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
         <ReviewLinks path={r.path} small />
@@ -491,7 +524,7 @@ function Player({ r, onClose }: { r: Render; onClose: () => void }) {
       <div onClick={(e) => e.stopPropagation()} style={{ ...card, width: "min(100%, 1100px)", display: "grid", gap: 10 }}>
         <div style={{ display: "flex", gap: 10, alignItems: "baseline", flexWrap: "wrap" }}>
           <span style={{ fontSize: 14, fontWeight: 700, wordBreak: "break-all" }}>{fileName(r.path)}</span>
-          <span style={{ fontSize: 11, color: "var(--text-dim)" }}>{r.episode} · {r.kind} · {fmtDay(r.timestamp)}</span>
+          <span style={{ fontSize: 11, color: "var(--text-dim)" }}>{meta(r)}</span>
           <span style={{ marginLeft: "auto", display: "inline-flex", flexWrap: "wrap", gap: 8 }}>
             <ReviewLinks path={r.path} />
             <button style={btn()} onClick={onClose}>Close</button>

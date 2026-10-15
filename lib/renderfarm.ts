@@ -1,8 +1,9 @@
 import https from "node:https";
 import { prisma } from "@/lib/db";
 import { isPortalAdmin } from "@/lib/usage";
+import { RENDER_FARM_APP_ID, isRenderFarmViewer } from "@/lib/renderfarmAccess";
 
-export const RENDER_FARM_APP_ID = "renderfarm";
+export { RENDER_FARM_APP_ID };
 
 /**
  * Server-side client for the render farm PC's portal API (scripts/portal-api.js in
@@ -74,17 +75,21 @@ export function farmJson(r: FarmResponse): Response {
   return Response.json(r.body, { status: r.status, headers: { "Cache-Control": "no-store" } });
 }
 
+export type RenderFarmAccess = { view: boolean; control: boolean };
+
 /**
- * Who may use the Render Farm page and its API: portal admins, plus anyone the portal has
- * granted the `renderfarm` app (owner, 24 Sep 2026: Samuel and Austin).
+ * What the signed-in person may do on the Render Farm (owner, 15 Oct 2026).
+ * view: the page, queue, live status, history, previews (the team: lib/renderfarmAccess.ts).
+ * control: start, pause or stop the farm, stop the current render, re-queue a failed card. Portal
+ * admins, plus anyone Portal has granted the `renderfarm` app (owner, 24 Sep 2026: Samuel and Austin).
  */
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
-export async function canUseRenderFarm(session: any): Promise<boolean> {
-  if (await isPortalAdmin(session)) return true;
+export async function renderFarmAccess(session: any): Promise<RenderFarmAccess> {
+  if (await isPortalAdmin(session)) return { view: true, control: true };
   const discordId = (session?.user as Record<string, unknown> | undefined)?.discordId as string | undefined;
-  if (!discordId) return false;
+  if (!discordId) return { view: false, control: false };
   const dbUser = await prisma.user.findUnique({ where: { discordId } });
-  if (!dbUser) return false;
-  const grant = await prisma.appAccess.findFirst({ where: { userId: dbUser.id, appId: RENDER_FARM_APP_ID, granted: true } });
-  return Boolean(grant);
+  if (!dbUser) return { view: false, control: false };
+  const granted = (await prisma.appAccess.findMany({ where: { userId: dbUser.id, granted: true } })).map((g) => g.appId);
+  return { view: isRenderFarmViewer(false, granted), control: granted.includes(RENDER_FARM_APP_ID) };
 }

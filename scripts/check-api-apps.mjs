@@ -80,12 +80,16 @@ check("signed out -> 401", res.status === 401, `status ${res.status}`);
 
 // 2. People, each compared with /api/me (apps first: /api/me upserts).
 const people = [
-  { label: "editor with desk, foia-sorter, script-reviewer", id: "900000000000000010", username: "check-editor", seed: [false, ["desk", "foia-sorter", "script-reviewer"]], expect: { desk: true, "foia-sorter": true, "insanity-courses": true, pulse: false, autobot: false, "ayoub-private-assistant": false } },
-  { label: "Portal admin, no grants", id: "900000000000000011", username: "check-admin", seed: [true, []], expect: { autobot: true, "script-reviewer": true, desk: false, pulse: false, renderfarm: false, "ayoub-private-assistant": false } },
+  { label: "editor with desk, foia-sorter, script-reviewer", id: "900000000000000010", username: "check-editor", seed: [false, ["desk", "foia-sorter", "script-reviewer"]], expect: { desk: true, "foia-sorter": true, "insanity-courses": true, pulse: false, autobot: false, "ayoub-private-assistant": false, renderfarm: true } },
+  { label: "Portal admin, no grants", id: "900000000000000011", username: "check-admin", seed: [true, []], expect: { autobot: true, "script-reviewer": true, desk: false, pulse: false, renderfarm: true, "ayoub-private-assistant": false } },
   { label: "owner of the personal app (Ayoub's id)", id: "1033050881798709378", username: "ayoub_prods", seed: [false, ["ayoub-private-assistant", "desk"]], expect: { "ayoub-private-assistant": true, "cases-dashboard": true, desk: true } },
   { label: "admin on the cases and dubbing lists (shadew_)", id: "214430154527735808", username: "shadew_", seed: [true, ["frontwind-dubbing", "renderfarm", "pulse", "desk"]], expect: { "frontwind-dubbing": true, "cases-dashboard": true, renderfarm: true, pulse: true, "ayoub-private-assistant": false } },
   { label: "ADMIN_DISCORD_ID, no Portal row yet", id: "900000000000000001", username: "check-env-admin", seed: null, expect: { autobot: true, desk: false }, admin: true },
   { label: "brand-new person, no Portal row", id: "900000000000000012", username: "check-new", seed: null, expect: { "insanity-courses": true, desk: false, autobot: false } },
+  // Render Farm (15 Oct 2026): the team sees it; guests (a pilot only) and Autobot-only accounts do not.
+  { label: "Patreon pilot guest only", id: "900000000000000013", username: "check-guest", seed: [false, ["patreon"]], expect: { patreon: true, renderfarm: false, desk: false } },
+  { label: "Autobot only (ProjectA-style)", id: "900000000000000014", username: "check-autobot", seed: [false, ["autobot"]], expect: { autobot: true, renderfarm: false } },
+  { label: "renderfarm grant only", id: "900000000000000015", username: "check-rf", seed: [false, ["renderfarm"]], expect: { renderfarm: true, desk: false } },
 ];
 for (const p of people) {
   if (p.seed) seed(p.id, ...p.seed);

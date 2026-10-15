@@ -57,10 +57,12 @@ export const sections: AppSection[] = [
         status: "live",
       },
       {
-        // Owner, 24 Sep 2026: on the top bar for whoever Portal grants it (Samuel + Austin).
+        // Owner, 15 Oct 2026: the whole team sees it (lib/renderfarmAccess.ts decides; /api/me, /api/apps and
+        // /api/auth/redirect use that rule, not this grant). The grant ticked in /admin now means "may control
+        // the farm" (admins always may): owner, 24 Sep 2026, Samuel + Austin.
         id: "renderfarm",
         name: "Render Farm",
-        description: "After Effects render queue, failures and farm controls.",
+        description: "After Effects renders: what is rendering now, the queue, finished renders and failures.",
         url: "https://portal.insanity.team/renderfarm",
         requireExplicitGrant: true,
         icon: "▣",

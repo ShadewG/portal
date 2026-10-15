@@ -6,6 +6,7 @@ import { signAppToken } from "@/lib/jwt";
 import { permittedAppIds } from "@/lib/access";
 import { FRONTWIND_DUBBING_APP_ID, isFrontwindDubbingAllowed } from "@/lib/frontwindAccess";
 import { CASES_DASHBOARD_APP_ID, isCasesDashboardAllowed } from "@/lib/casesAccess";
+import { RENDER_FARM_APP_ID } from "@/lib/renderfarmAccess";
 
 function getPortalBaseUrl(req: NextRequest) {
   const forwardedProto = req.headers.get("x-forwarded-proto");
@@ -122,6 +123,8 @@ export async function GET(req: NextRequest) {
     ? isCasesDashboardAllowed(user)
     : appId === FRONTWIND_DUBBING_APP_ID
       ? accessRows.length > 0 && isFrontwindDubbingAllowed(user)
+      : appId === RENDER_FARM_APP_ID
+        ? (await permittedAppIds({ id: dbUser.id, isAdmin }, user)).includes(appId)
       : app.requireExplicitGrant
         ? accessRows.length > 0
         : app.allowAnyAuthenticatedUser || isAdmin || accessRows.length > 0;

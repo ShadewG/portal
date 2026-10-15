@@ -3,6 +3,7 @@ import { prisma } from "@/lib/db";
 import { allApps } from "@/lib/apps";
 import { FRONTWIND_DUBBING_APP_ID, isFrontwindDubbingAllowed } from "@/lib/frontwindAccess";
 import { CASES_DASHBOARD_APP_ID, isCasesDashboardAllowed } from "@/lib/casesAccess";
+import { RENDER_FARM_APP_ID, isRenderFarmViewer } from "@/lib/renderfarmAccess";
 
 /** GET /api/me — upsert user + return access map */
 export async function GET() {
@@ -68,6 +69,8 @@ export async function GET() {
         access[app.id] = isCasesDashboardAllowed(user);
       } else if (app.id === FRONTWIND_DUBBING_APP_ID) {
         access[app.id] = hasAppAccess && isFrontwindDubbingAllowed(user);
+      } else if (app.id === RENDER_FARM_APP_ID) {
+        access[app.id] = isRenderFarmViewer(dbUser.isAdmin, accessRows.map((a) => a.appId));
       } else if (app.requireExplicitGrant) {
         access[app.id] = hasAppAccess;
       } else if (app.allowAnyAuthenticatedUser) {

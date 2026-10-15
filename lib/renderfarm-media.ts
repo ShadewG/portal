@@ -151,14 +151,23 @@ export async function alphaPreview(p: string): Promise<{ ready: boolean; file: s
   if (await exists(out)) return { ready: true, file: out };
   const failed = failures.get(p);
   if (failed && Date.now() - failed.at < 10 * 60_000) return { ready: false, file: out, error: failed.error };
-  void once(`preview:${p}`, async () => {
+  void once(`preview:${p}`, () => oneAtATime(async () => {
     await mkdir(dir, { recursive: true });
     const url = await temporaryLink(p), tmp = `${out}.part.mp4`;
     await ffmpeg(["-i", url, "-filter_complex", flatten(1280), "-map", "[v]", "-map", "0:a?", "-c:v", "libx264", "-preset", "veryfast", "-crf", "24",
       "-c:a", "aac", "-b:a", "128k", "-movflags", "+faststart", tmp], 15 * 60_000);
     await rename(tmp, out);
     void prune(dir);
-  }).catch((e) => { failures.set(p, { at: Date.now(), error: String(e?.message || e).slice(0, 200) }); });
+  })).catch((e) => { failures.set(p, { at: Date.now(), error: String(e?.message || e).slice(0, 200) }); });
   return { ready: false, file: out };
 }
 const failures = new Map<string, { at: number; error: string }>();
+
+// Full alpha transcodes run one at a time (15 Oct 2026): the whole team can open previews now, and
+// this 4-vCPU box serves every app. Posters (one frame each) are not queued.
+let transcodeChain: Promise<unknown> = Promise.resolve();
+function oneAtATime(work: () => Promise<void>): Promise<void> {
+  const run = transcodeChain.then(work, work);
+  transcodeChain = run.catch(() => undefined);
+  return run;
+}

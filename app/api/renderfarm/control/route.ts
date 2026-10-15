@@ -1,12 +1,12 @@
 import { auth } from "@/auth";
-import { FARM_ACTIONS, actorOf, canUseRenderFarm, farmJson, farmRequest } from "@/lib/renderfarm";
+import { FARM_ACTIONS, actorOf, farmJson, farmRequest, renderFarmAccess } from "@/lib/renderfarm";
 
 export const dynamic = "force-dynamic";
 
-/** POST /api/renderfarm/control {action} — start/pause/stop the farm or stop the current render (admins + Render Farm grant). */
+/** POST /api/renderfarm/control {action} — start/pause/stop the farm or stop the current render (admins + Render Farm grant only). */
 export async function POST(req: Request) {
   const session = await auth();
-  if (!(await canUseRenderFarm(session))) {
+  if (!(await renderFarmAccess(session)).control) {
     return Response.json({ error: "Forbidden" }, { status: 403 });
   }
   // JSON only: a cross-site form post can't set this content type without a CORS preflight.
