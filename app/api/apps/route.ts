@@ -3,21 +3,11 @@ import { auth } from "@/auth";
 import { prisma } from "@/lib/db";
 import { sections } from "@/lib/apps";
 import { permittedAppIds } from "@/lib/access";
+import { portalOrigin } from "@/lib/portalOrigin";
 
 export const dynamic = "force-dynamic";
 
 const NO_STORE = { "Cache-Control": "private, no-store" };
-
-function getPortalBaseUrl(req: NextRequest) {
-  const forwardedProto = req.headers.get("x-forwarded-proto");
-  const forwardedHost = req.headers.get("x-forwarded-host");
-
-  if (forwardedProto && forwardedHost) {
-    return `${forwardedProto}://${forwardedHost}`;
-  }
-
-  return process.env.AUTH_URL ? new URL(process.env.AUTH_URL).origin : req.nextUrl.origin;
-}
 
 function originOf(url: string) {
   try {
@@ -53,7 +43,7 @@ export async function GET(req: NextRequest) {
     return Response.json({ error: "Portal is temporarily unavailable" }, { status: 503, headers: NO_STORE });
   }
 
-  const base = getPortalBaseUrl(req);
+  const base = portalOrigin(req);
   return Response.json(
     {
       version: 1,

@@ -2,6 +2,7 @@ import { readFile } from "node:fs/promises";
 import type { NextRequest } from "next/server";
 import { auth } from "@/auth";
 import { prisma } from "@/lib/db";
+import { portalOrigin } from "@/lib/portalOrigin";
 
 // Owner (15 Sep 2026): "when people visit desk.insanity.team they automatically see the page
 // linked to their discord profile". The portal already knows who they are — NextAuth with the
@@ -63,8 +64,10 @@ export async function GET(req: NextRequest) {
   // Since 17 Sep 2026 the Desk app at desk.insanity.team is the home for everyone; Portal's own
   // handoff signs them in there. The reviewer-token and admin-overview redirects below stay as
   // the fallback for ?legacy=1 (the app links to the token page as "your private link").
+  // The handoff is built on Portal's public address: req.nextUrl.origin here is the bind address
+  // (https://0.0.0.0:3002), see lib/portalOrigin.ts.
   if (req.nextUrl.searchParams.get("legacy") !== "1") {
-    const handoff = new URL("/api/auth/redirect", req.nextUrl.origin);
+    const handoff = new URL("/api/auth/redirect", portalOrigin(req));
     handoff.searchParams.set("app", "desk");
     return Response.redirect(handoff.toString(), 302);
   }

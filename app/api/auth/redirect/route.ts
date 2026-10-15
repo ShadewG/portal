@@ -7,17 +7,7 @@ import { permittedAppIds } from "@/lib/access";
 import { FRONTWIND_DUBBING_APP_ID, isFrontwindDubbingAllowed } from "@/lib/frontwindAccess";
 import { CASES_DASHBOARD_APP_ID, isCasesDashboardAllowed } from "@/lib/casesAccess";
 import { RENDER_FARM_APP_ID } from "@/lib/renderfarmAccess";
-
-function getPortalBaseUrl(req: NextRequest) {
-  const forwardedProto = req.headers.get("x-forwarded-proto");
-  const forwardedHost = req.headers.get("x-forwarded-host");
-
-  if (forwardedProto && forwardedHost) {
-    return `${forwardedProto}://${forwardedHost}`;
-  }
-
-  return process.env.AUTH_URL ?? req.nextUrl.origin;
-}
+import { portalOrigin } from "@/lib/portalOrigin";
 
 function resolveReturnTo(appUrl: string, allowedOrigins: string[] | undefined, returnTo: string | null) {
   if (!returnTo) return null;
@@ -73,7 +63,7 @@ export async function GET(req: NextRequest) {
   const discordId = user?.discordId as string | undefined;
 
   if (!discordId) {
-    const loginUrl = new URL("/login", getPortalBaseUrl(req));
+    const loginUrl = new URL("/login", portalOrigin(req));
     const callbackUrl = `${req.nextUrl.pathname}${req.nextUrl.search}`;
     loginUrl.searchParams.set("callbackUrl", callbackUrl);
     return Response.redirect(loginUrl.toString(), 302);
