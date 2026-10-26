@@ -270,8 +270,25 @@ export const sections: AppSection[] = [
 
 export const allApps = sections.flatMap((s) => s.apps);
 
+/** Sign-in only: never listed in the hub, /admin or /api/me, and grants nothing by itself. Any Discord account may
+ *  sign in; the app decides what the person sees (Video Review: one review, through a "Discord sign-in" guest link). */
+const signInOnlyApps: AppConfig[] = [
+  {
+    id: "video-review-guest",
+    name: "Video Review guest link",
+    description: "Discord sign-in for a Video Review guest link.",
+    url: "https://foiasorter.insanity.team/review/",
+    handoffPath: "/review/api/guest/portal",
+    allowAnyAuthenticatedUser: true,
+    allowedOrigins: ["https://foiasorter.insanity.team"],
+    icon: "▶",
+    color: "#5865f2",
+    status: "live",
+  },
+];
+
 export function getAppById(id: string): AppConfig | undefined {
-  return allApps.find((a) => a.id === id);
+  return allApps.find((a) => a.id === id) ?? signInOnlyApps.find((a) => a.id === id);
 }
 
 export function appRequiresPortalAuth(app: AppConfig): boolean {
