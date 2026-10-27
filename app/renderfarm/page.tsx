@@ -20,7 +20,7 @@ type Card = { pageId: string; name: string; kind: string; status: string; format
 type HistoryRow = { timestamp: string; type: string; label: string; name: string; kind: string; episode: string; detail: string };
 type Check = { level: string; message: string; fix?: string };
 type Controls = { canControl: boolean; state: string; maintenance: boolean; paused: boolean };
-type Host = { checkedAt: string | null; ramFreeGB?: number; ramTotalGB?: number; aeMemGB?: number; disks?: { drive: string; freeGB: number; totalGB: number }[]; error?: string };
+type Host = { checkedAt: string | null; ramFreeGB?: number; ramTotalGB?: number; aeMemGB?: number; disks?: { drive: string; freeGB: number; totalGB: number }[]; bootedAt?: string; error?: string };
 type Live = {
   generatedAt: string;
   overall: string;
@@ -101,6 +101,14 @@ function fmtDuration(s: number | null | undefined): string {
   if (m < 60) return `${m}m ${s % 60}s`;
   return `${Math.floor(m / 60)}h ${m % 60}m`;
 }
+/** Days since the render PC started. bootedAt is Windows' "MM/DD/YYYY HH:MM:SS" in the PC's own time. */
+function upDays(bootedAt: string | undefined, now: number): number | null {
+  const m = /^(\d{1,2})\/(\d{1,2})\/(\d{4})/.exec(bootedAt ?? "");
+  if (!m) return null;
+  const days = Math.floor((now - Date.UTC(Number(m[3]), Number(m[1]) - 1, Number(m[2]))) / 86_400_000);
+  return days >= 0 ? days : null;
+}
+
 function fmtTime(ts: string): string {
   const d = new Date(ts);
   return Number.isNaN(d.getTime()) ? ts : d.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
@@ -279,6 +287,8 @@ export default function RenderFarmPage() {
                   ) : state === "Running" || state === "Finishing current render" ? (
                     <>
                       {!data.controls.paused && <ControlButton action="Pause" text="Pause after current" />}
+                      {/* Paused with nothing left to finish (e.g. it paused itself for low memory): only Start gets it going. */}
+                      {data.controls.paused && !cur && <ControlButton action="Start" text="Start farm" tone="primary" />}
                       {!cur && <ControlButton action="Stop" text="Stop farm" tone="danger" guarded />}
                       <ControlButton action="Maintenance" text="Maintenance" tone="danger" guarded />
                     </>
@@ -433,6 +443,16 @@ export default function RenderFarmPage() {
               <section style={card}>
                 <p style={label}>Machine</p>
                 {data.host.error && <p style={{ fontSize: 11, color: "var(--amber)" }}>{data.host.error}</p>}
+                {(() => {
+                  const days = upDays(data.host.bootedAt, now);
+                  if (days == null) return null;
+                  return (
+                    <p style={{ margin: "0 0 10px", fontSize: 12, color: days >= 7 ? "var(--amber)" : "var(--text-dim)" }}>
+                      On for {days === 0 ? "less than a day" : `${days} day${days === 1 ? "" : "s"}`}
+                      {days >= 7 && " — restart the PC when nothing is rendering: crashed renders leak memory that only a restart frees"}
+                    </p>
+                  );
+                })()}
                 <div style={{ display: "grid", gap: 8, fontSize: 12 }}>
                   {data.host.ramTotalGB != null && (
                     <Meter name="Memory free" free={data.host.ramFreeGB ?? 0} total={data.host.ramTotalGB} note={data.host.aeMemGB ? `After Effects using ${data.host.aeMemGB} GB` : undefined} />
