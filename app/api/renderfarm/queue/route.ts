@@ -1,5 +1,5 @@
-import { createHash, timingSafeEqual } from "node:crypto";
 import { farmJson, farmRequest } from "@/lib/renderfarm";
+import { editorFor } from "@/lib/renderfarmEditorKey";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -7,23 +7,6 @@ export const maxDuration = 450;
 
 const allowed = new Set(["project", "filename", "path", "contentHash", "skipCheck", "pageId", "kind", "waitSeconds", "format", "comps"]);
 const json = (error: string, status: number) => Response.json({ error }, { status, headers: { "Cache-Control": "no-store" } });
-
-function editorFor(header: string | null): string | null {
-  const match = /^Bearer ([A-Za-z0-9_-]{32,256})$/.exec(header ?? "");
-  if (!match) return null;
-  const received = createHash("sha256").update(match[1]).digest();
-  let editor: string | null = null;
-  for (const entry of (process.env.RENDERFARM_QUEUE_KEYS || "").split(",")) {
-    const index = entry.indexOf(":");
-    if (index < 1) continue;
-    const name = entry.slice(0, index).trim();
-    const key = entry.slice(index + 1).trim();
-    if (!/^[a-z][a-z0-9_-]{0,31}$/i.test(name) || key.length < 32) continue;
-    const expected = createHash("sha256").update(key).digest();
-    if (timingSafeEqual(received, expected)) editor = name;
-  }
-  return editor;
-}
 
 /** Editor-key-only bridge; no Portal cookie, farm control or generic proxy access. */
 export async function POST(req: Request) {
