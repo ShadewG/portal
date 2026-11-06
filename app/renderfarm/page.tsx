@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useState, type CSSProperties } from "react";
+import { createElement, useCallback, useEffect, useState, type CSSProperties } from "react";
 
 const REFRESH_MS = 5000;
 
@@ -516,8 +516,55 @@ function RenderTile({ r, onPlay }: { r: Render; onPlay: () => void }) {
   );
 }
 
+/* The shared player (6 Nov 2026): every app plays video through the workspace's <insanity-player>
+   (engine/player.js, same origin here), so a change to it shows up everywhere. The page's own <video>
+   stays the fallback when player.js fails to load, or loads without defining the element within ~6 s. */
+const PLAYER_JS = "/workspace/engine/player.js";
+
+/** a script added once; data-state="load|error" once it has */
+function loadScript(src: string): HTMLScriptElement {
+  let s = document.querySelector<HTMLScriptElement>(`script[src="${src}"]`);
+  if (!s) {
+    const el = (s = document.createElement("script"));
+    el.src = src;
+    el.async = true;
+    el.addEventListener("load", () => { el.dataset.state = "load"; }, { once: true });
+    el.addEventListener("error", () => { el.dataset.state = "error"; }, { once: true });
+    document.head.appendChild(el);
+  }
+  return s;
+}
+
+/** true once <insanity-player> is defined; false when player.js fails, or loads without defining it within ~6 s; null while deciding */
+function usePlayerEngine(): boolean | null {
+  const [ok, setOk] = useState<boolean | null>(() => (typeof window !== "undefined" && customElements.get("insanity-player") ? true : null));
+  useEffect(() => {
+    if (customElements.get("insanity-player")) { setOk(true); return; }
+    let done = false, timer = 0;
+    const finish = (v: boolean) => { if (!done) { done = true; clearTimeout(timer); setOk(v); } };
+    void customElements.whenDefined("insanity-player").then(() => finish(true));
+    const s = loadScript(PLAYER_JS);
+    const wait = () => { timer = window.setTimeout(() => finish(!!customElements.get("insanity-player")), 6000); };
+    const fail = () => finish(false);
+    if (s.dataset.state === "error") fail();
+    else if (s.dataset.state === "load") wait();
+    else { s.addEventListener("load", wait, { once: true }); s.addEventListener("error", fail, { once: true }); }
+    return () => { done = true; clearTimeout(timer); s.removeEventListener("load", wait); s.removeEventListener("error", fail); };
+  }, []);
+  return ok;
+}
+
+/** the player in the Portal's colours (globals.css), square corners like the cards around it */
+const engineStyle = {
+  display: "block", width: "100%",
+  "--ip-accent": "var(--accent)", "--ip-accent-fg": "#fff", "--ip-bg": "#000", "--ip-panel": "var(--bg-elevated)",
+  "--ip-pop": "var(--bg-hover)", "--ip-text": "var(--text)", "--ip-dim": "var(--text-dim)", "--ip-line": "var(--border-bright)",
+  "--ip-hover": "var(--bg-hover)", "--ip-radius": "0px", "--ip-box-max": "calc(75vh - 110px)",
+} as CSSProperties;
+
 /** Plays a delivered render in a window over the page. Alpha renders need a browser copy made first. */
 function Player({ r, onClose }: { r: Render; onClose: () => void }) {
+  const engine = usePlayerEngine();
   const [media, setMedia] = useState<{ url?: string | null; ready?: boolean; error?: string } | null>(null);
   useEffect(() => {
     let alive = true, timer: ReturnType<typeof setTimeout> | undefined;
@@ -550,15 +597,26 @@ function Player({ r, onClose }: { r: Render; onClose: () => void }) {
             <button style={btn()} onClick={onClose}>Close</button>
           </span>
         </div>
-        <div style={{ background: "#000", aspectRatio: "16 / 9", display: "grid", placeItems: "center" }}>
-          {media?.ready && media.url ? (
-            <video src={media.url} controls autoPlay playsInline style={{ width: "100%", height: "100%", maxHeight: "75vh" }} />
-          ) : (
-            <span style={{ fontSize: 12, color: media?.error ? "var(--red)" : "var(--text-dim)", padding: 16, textAlign: "center" }}>
-              {media?.error ? media.error : r.alpha ? "Making a browser-playable copy of this alpha render (first time only, usually under a minute)…" : "Loading…"}
-            </span>
-          )}
-        </div>
+        {media?.ready && media.url && engine ? (
+          // starts on its own, muted (browsers only let a muted video start by itself); alpha renders arrive already
+          // flattened onto grey by /api/renderfarm/media, so they need no checker here
+          createElement("insanity-player", {
+            key: media.url, mode: "video", autoplay: "", muted: "", style: engineStyle,
+            src: new URL(media.url, window.location.href).href,
+            poster: new URL(`/api/renderfarm/poster?path=${encodeURIComponent(r.path)}`, window.location.href).href,
+            "aria-label": fileName(r.path),
+          })
+        ) : (
+          <div style={{ background: "#000", aspectRatio: "16 / 9", display: "grid", placeItems: "center" }}>
+            {media?.ready && media.url && engine === false ? (
+              <video src={media.url} controls autoPlay playsInline style={{ width: "100%", height: "100%", maxHeight: "75vh" }} />
+            ) : (
+              <span style={{ fontSize: 12, color: media?.error ? "var(--red)" : "var(--text-dim)", padding: 16, textAlign: "center" }}>
+                {media?.error ? media.error : r.alpha ? "Making a browser-playable copy of this alpha render (first time only, usually under a minute)…" : "Loading…"}
+              </span>
+            )}
+          </div>
+        )}
         <div style={{ fontSize: 11, color: "var(--text-muted)", wordBreak: "break-all" }}>
           Dropbox: {r.path}
           {r.alpha && " · transparent areas shown on grey"}
