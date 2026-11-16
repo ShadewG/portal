@@ -1,6 +1,7 @@
 "use client";
 
 import { createElement, useCallback, useEffect, useState, type CSSProperties } from "react";
+import PremiereQueue from "./PremiereQueue";
 
 const REFRESH_MS = 5000;
 
@@ -263,6 +264,8 @@ export default function RenderFarmPage() {
         {forbidden && <p style={{ color: "var(--text-dim)" }}>You do not have access to the Render Farm. Ask Samuel for access in Portal.</p>}
         {!forbidden && !data && !error && <p style={{ color: "var(--text-dim)" }}>Connecting to the render farm…</p>}
         {!forbidden && !data && error && <p style={{ color: "var(--red)" }}>{error}</p>}
+        {/* The Premiere queue lives on this server: show it even when the After Effects farm can't be reached. */}
+        {!forbidden && !data && error && <PremiereQueue />}
         {playing && <Player r={playing} onClose={closePlayer} />}
 
         {data && (
@@ -341,6 +344,9 @@ export default function RenderFarmPage() {
                 </div>
               )}
             </section>
+
+            {/* Premiere renders (premiere-farm service on this server) */}
+            <PremiereQueue />
 
             {/* Recent renders: thumbnails, click to play */}
             {renders.length > 0 && (
