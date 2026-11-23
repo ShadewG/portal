@@ -8,19 +8,8 @@ const allowedDiscordIds = new Set([
   "214430154527735808", // Samuel / shadew_
 ]);
 
-const allowedUsernames = new Set([
-  "ray",
-  "thfray",
-  "ed044426",
-  "chris_valentini",
-  "hareld",
-  "harald",
-  "samuel",
-  "shadew_",
-]);
 
+// Discord id only: usernames are not identity (generic handles like "ray" could be claimed by anyone).
 export function isFrontwindDubbingAllowed(user: Record<string, unknown> | undefined) {
-  const discordId = String(user?.discordId ?? "");
-  const username = String(user?.username ?? "").toLowerCase();
-  return allowedDiscordIds.has(discordId) || allowedUsernames.has(username);
+  return allowedDiscordIds.has(String(user?.discordId ?? ""));
 }
