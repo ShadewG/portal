@@ -1,5 +1,6 @@
 import { auth } from "@/auth";
-import { isPortalAdmin, readUsage } from "@/lib/usage";
+import { readUsage } from "@/lib/usage";
+import { isPortalAdmin } from "@/lib/admin";
 
 export const dynamic = "force-dynamic";
 

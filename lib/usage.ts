@@ -1,5 +1,4 @@
 import { promises as fs } from "fs";
-import { prisma } from "@/lib/db";
 
 // Written every 2 minutes by /opt/apps/usage-monitor/collect.py (systemd user timer
 // usage-monitor.timer). The files hold usage numbers only, never tokens.
@@ -35,26 +34,6 @@ export type UsageAccount = {
 type Sample = { t: number; a: Record<string, Record<string, number>> };
 
 export type UsageSeries = { id: string; key: string; points: [number, number][] };
-
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-export async function isPortalAdmin(session: any): Promise<boolean> {
-  const user = (session?.user as Record<string, unknown> | undefined) ?? undefined;
-  const discordId = user?.discordId as string | undefined;
-  const email = user?.email as string | undefined;
-  const username = (user?.username as string | undefined) ?? (user?.name as string | undefined);
-  if (discordId && discordId === process.env.ADMIN_DISCORD_ID) return true;
-  if (!discordId && !email && !username) return false;
-  const dbUser = await prisma.user.findFirst({
-    where: {
-      OR: [
-        ...(discordId ? [{ discordId }] : []),
-        ...(email ? [{ email }] : []),
-        ...(username ? [{ username }] : []),
-      ],
-    },
-  });
-  return dbUser?.isAdmin ?? false;
-}
 
 async function readHistory(): Promise<Sample[]> {
   try {

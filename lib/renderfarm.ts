@@ -1,6 +1,6 @@
 import https from "node:https";
 import { prisma } from "@/lib/db";
-import { isPortalAdmin } from "@/lib/usage";
+import { isPortalAdmin } from "@/lib/admin";
 import { RENDER_FARM_APP_ID, isRenderFarmViewer } from "@/lib/renderfarmAccess";
 
 export { RENDER_FARM_APP_ID };
