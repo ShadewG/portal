@@ -11,7 +11,7 @@ export const dynamic = "force-dynamic";
  *
  * GET  ?op=jobs                      the queue (team: same people who see the Render Farm)
  * GET  ?op=search&q=IB57             Premiere projects in Dropbox by name
- * POST {op:'add', projects, preset, position}      admins + Render Farm grant
+ * POST {op:'add', projects, preset, position, no_captions}      admins + Render Farm grant (no_captions: captions off in the farm copy)
  * POST {op:'reorder', order:[job...]}
  * POST {op:'action', job, action, value}
  */
@@ -76,7 +76,7 @@ export async function POST(req: Request) {
     case "add": {
       const projects = (Array.isArray(body.projects) ? body.projects : []).map(String).filter((p) => p.startsWith("/") && /\.prproj$/i.test(p)).slice(0, 200);
       if (!projects.length) return Response.json({ error: "Pick at least one Premiere project" }, { status: 400 });
-      return pf("POST", "/jobs", who, { projects, preset: String(body.preset || "insanity"), position: body.position === "top" ? "top" : "bottom" });
+      return pf("POST", "/jobs", who, { projects, preset: String(body.preset || "insanity"), position: body.position === "top" ? "top" : "bottom", no_captions: body.no_captions === true });
     }
     case "reorder": {
       const order = (Array.isArray(body.order) ? body.order : []).map(String).filter((j) => /^[A-Za-z0-9_-]{1,40}$/.test(j)).slice(0, 1000);

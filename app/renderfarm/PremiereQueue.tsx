@@ -33,6 +33,8 @@ type PJob = {
   review_url?: string | null;
   progress: Progress;
   working: boolean;
+  no_captions?: boolean;
+  captions?: { switched_off?: number; kept?: number; already_off?: number; caption_tracks?: string[] } | null;
 };
 type Found = { path: string; name: string; folder: string; modified?: string | null; size?: number; autosave: boolean; old: boolean; queued_as?: string | null };
 type Data = { jobs: PJob[]; presets: { id: string; label: string }[]; lanes: Record<string, string>; viewer?: { canControl: boolean }; error?: string };
@@ -115,6 +117,7 @@ export default function PremiereQueue() {
   const [showOld, setShowOld] = useState(false);
   const [preset, setPreset] = useState("insanity");
   const [position, setPosition] = useState<"bottom" | "top">("bottom");
+  const [noCaptions, setNoCaptions] = useState(false);
   const [paste, setPaste] = useState("");
 
   const canControl = data?.viewer?.canControl === true;
@@ -238,7 +241,7 @@ export default function PremiereQueue() {
   async function addPicked() {
     const projects = [...picked, ...paste.split(/\r?\n/).map((s) => s.trim()).filter((s) => s.startsWith("/") && /\.prproj$/i.test(s))];
     if (!projects.length) return setNotice({ ok: false, text: "Pick at least one project (or paste a Dropbox path to a .prproj)" });
-    const ok = await post({ op: "add", projects, preset, position }, "add");
+    const ok = await post({ op: "add", projects, preset, position, no_captions: noCaptions }, "add");
     if (ok) {
       setPicked(new Set());
       setPaste("");
@@ -295,6 +298,11 @@ export default function PremiereQueue() {
               <option value="bottom">Add to the end</option>
               <option value="top">Add to the top</option>
             </select>
+            <label style={{ fontSize: 12, display: "flex", gap: 6, alignItems: "center", cursor: "pointer" }}
+              title="Switch the burnt-in captions off in the farm's copy of the project (the editor's file is not touched). Titles, names and labels stay; the job lists every text clip for review.">
+              <input type="checkbox" checked={noCaptions} onChange={(e) => setNoCaptions(e.target.checked)} />
+              Remove captions
+            </label>
           </div>
 
           {searching && <p style={{ margin: 0, fontSize: 12, color: "var(--text-dim)" }}>Searching Dropbox…</p>}
@@ -410,6 +418,9 @@ export default function PremiereQueue() {
                 <span style={{ width: 8, height: 8, borderRadius: "50%", background: tone(j), flex: "none" }} />
                 <button onClick={() => toggle(setOpen, j.job)} style={{ background: "none", border: "none", padding: 0, color: "var(--text)", textAlign: "left", cursor: "pointer", fontFamily: "inherit", minWidth: 0, flex: "1 1 220px" }}>
                   <span style={{ fontSize: 13, fontWeight: 600, wordBreak: "break-word" }}>{j.title.replace(/\.prproj$/i, "")}</span>
+                  {j.no_captions && (
+                    <span style={{ marginLeft: 6, fontSize: 10, padding: "1px 5px", border: "1px solid var(--border)", color: "var(--text-dim)", whiteSpace: "nowrap" }}>No captions</span>
+                  )}
                   <span style={{ display: "block", fontSize: 11, color: "var(--text-dim)" }}>
                     {j.held ? "On hold · " : ""}
                     {j.label}
@@ -441,6 +452,11 @@ export default function PremiereQueue() {
                 <div style={{ marginTop: 8, paddingLeft: canControl ? 50 : 30, display: "grid", gap: 6, fontSize: 12 }}>
                   <div style={{ color: "var(--text-dim)", wordBreak: "break-word" }}>{j.project}</div>
                   {j.note && <div style={{ color: "var(--text-dim)" }}>{j.note}</div>}
+                  {j.no_captions && j.captions && (
+                    <div style={{ color: "var(--text-dim)" }}>
+                      Captions off: {j.captions.switched_off ?? 0} caption clips switched off{j.captions.caption_tracks?.length ? ` (tracks ${j.captions.caption_tracks.join(", ")} and captions elsewhere)` : ""}; {j.captions.kept ?? 0} other text clips kept (titles, names, labels).
+                    </div>
+                  )}
                   {j.blockers.length > 0 && (
                     <div>
                       <div style={{ ...label, margin: "4px 0", color: "var(--amber)" }}>Would stop or change the render</div>
