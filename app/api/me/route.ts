@@ -4,6 +4,7 @@ import { allApps } from "@/lib/apps";
 import { FRONTWIND_DUBBING_APP_ID, isFrontwindDubbingAllowed } from "@/lib/frontwindAccess";
 import { CASES_DASHBOARD_APP_ID, isCasesDashboardAllowed } from "@/lib/casesAccess";
 import { RENDER_FARM_APP_ID, isRenderFarmViewer } from "@/lib/renderfarmAccess";
+import { syncTeamDesk } from "@/lib/teamAccess";
 
 /** GET /api/me — upsert user + return access map */
 export async function GET() {
@@ -55,6 +56,9 @@ export async function GET() {
         ]);
       }
     }
+
+    // a newcomer on the team sees Desk in the bar straight away (lib/teamAccess.ts; only someone with no Desk row is looked up)
+    await syncTeamDesk({ id: dbUser.id, discordId }, { grantOnly: true });
 
     const accessRows = await prisma.appAccess.findMany({
       where: { userId: dbUser.id, granted: true },

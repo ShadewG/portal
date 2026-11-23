@@ -231,8 +231,10 @@ export default function Dashboard() {
       <header
         style={{
           borderBottom: "1px solid var(--border)",
-          padding: "14px 28px",
+          padding: "14px clamp(14px, 4vw, 28px)",
           display: "flex",
+          flexWrap: "wrap",
+          gap: "10px 16px",
           alignItems: "center",
           justifyContent: "space-between",
         }}
@@ -251,7 +253,7 @@ export default function Dashboard() {
             Command Center
           </h1>
         </div>
-        <div style={{ display: "flex", alignItems: "center", gap: 14 }}>
+        <div style={{ display: "flex", flexWrap: "wrap", alignItems: "center", gap: "8px 14px" }}>
           {isAdmin && (
             <a
               href="/renderfarm"

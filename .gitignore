@@ -6,3 +6,6 @@ node_modules
 next-env.d.ts
 .next*/
 *.bak*
+.env*
+!.env.example
+*.log

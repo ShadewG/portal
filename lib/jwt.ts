@@ -12,6 +12,8 @@ export interface PortalToken {
   appId: string;
   appUserId?: string;
   apps?: string[];
+  /** Desk only: the name the team knows them by on the Discord server (lib/teamAccess.ts) */
+  name?: string;
   iat: number;
   exp: number;
 }
@@ -27,6 +29,7 @@ export function signAppToken(payload: {
   appId: string;
   appUserId?: string;
   apps?: string[];
+  name?: string;
 }): string {
   return jwt.sign(payload, SECRET, { expiresIn: "5m" });
 }
