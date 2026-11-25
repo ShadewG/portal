@@ -62,7 +62,7 @@ const ok = (cond, what) => { if (cond) pass++; else { fail++; console.log("FAIL"
 const owner = process.env.ADMIN_DISCORD_ID;
 const users = await real.user.findMany({ orderBy: { createdAt: "asc" }, select: { discordId: true, username: true } });
 const grants = [...grantCatalog.map((g) => g.id), "nope.unknown", "pulse.hiring.extra", ""];
-let compared = 0; const diffs = []; const hiring = [];
+let compared = 0; let formatRefused = 0; const diffs = []; const hiring = [];
 for (const u of users) {
   globalThis.__t.session = { user: { discordId: u.discordId, username: u.username, isAdmin: u.discordId === owner } };
   const batch = await (await spost({ discordId: u.discordId, grants: grants.slice(0, 16) })).json();
@@ -72,13 +72,19 @@ for (const u of users) {
     const c = (await (await cookieGET(new NextRequest(`http://127.0.0.1:3900/api/access/check?grant=${encodeURIComponent(g)}`))).json()).allowed;
     const s = await sget(g, u.discordId); const sj = await s.json();
     compared++;
+    if (!/^\d{15,22}$/.test(u.discordId ?? "")) {   // service rows (not Discord ids): the server form refuses by format
+      formatRefused++;
+      if (sj.allowed !== false || all[g] !== false) diffs.push(`${u.username} ${g}: non-Discord id answered true`);
+      continue;
+    }
     if (c !== sj.allowed || s.status !== 200 || Object.keys(sj).join() !== "allowed") diffs.push(`${u.username} ${g || "(empty)"}: cookie ${c} server GET ${sj.allowed} (${s.status})`);
     if (all[g] !== c) diffs.push(`${u.username} ${g || "(empty)"}: cookie ${c} server POST ${all[g]}`);
   }
   if ((await (await sget("pulse.hiring", u.discordId)).json()).allowed) hiring.push(u.username);
 }
 ok(diffs.length === 0, "server form == cookie form for every user x grant");
-console.log(`users ${users.length}; grant answers compared ${compared} (GET and POST each); DIFFERENCES: ${diffs.length}`);
+console.log(`users ${users.length}; grant answers compared ${compared - formatRefused} (GET and POST each); DIFFERENCES: ${diffs.length}`);
+console.log(`non-Discord-id service rows (always false by format, cookie form cannot sign them in via Discord): ${users.filter((u) => !/^\d{15,22}$/.test(u.discordId ?? "")).map((u) => u.username).join(", ")} (${formatRefused} answers)`);
 for (const d of diffs.slice(0, 20)) console.log("  ", d);
 console.log(`pulse.hiring true for: ${hiring.join(", ") || "(nobody)"}`);
 
