@@ -51,7 +51,7 @@ const server = await import(pathToFileURL(path.join(root, "app/api/access/check/
 const { grantCatalog } = await import(pathToFileURL(path.join(root, "lib/grants.ts")).href);
 const { NextRequest } = await import("next/server");
 const U = "http://127.0.0.1:3900/api/access/check/server";
-const sget = (grant, discordId, key = SECRET) => server.GET(new NextRequest(`${U}?grant=${encodeURIComponent(grant)}&discordId=${encodeURIComponent(discordId)}`,
+const sget = (grant, discordId, key = SECRET, pid) => server.GET(new NextRequest(`${U}?grant=${encodeURIComponent(grant)}&discordId=${encodeURIComponent(discordId)}${pid === undefined ? "" : "&portalUserId=" + encodeURIComponent(pid)}`,
   { headers: key === null ? {} : { "x-portal-access-key": key } }));
 const spost = (body, key = SECRET) => server.POST(new NextRequest(U, { method: "POST", body: typeof body === "string" ? body : JSON.stringify(body),
   headers: { "content-type": "application/json", ...(key === null ? {} : { "x-portal-access-key": key }) } }));
@@ -60,7 +60,7 @@ let pass = 0, fail = 0;
 const ok = (cond, what) => { if (cond) pass++; else { fail++; console.log("FAIL", what); } };
 
 const owner = process.env.ADMIN_DISCORD_ID;
-const users = await real.user.findMany({ orderBy: { createdAt: "asc" }, select: { discordId: true, username: true } });
+const users = await real.user.findMany({ orderBy: { createdAt: "asc" }, select: { id: true, discordId: true, username: true } });
 const grants = [...grantCatalog.map((g) => g.id), "nope.unknown", "pulse.hiring.extra", ""];
 let compared = 0; let formatRefused = 0; const diffs = []; const hiring = [];
 for (const u of users) {
@@ -94,6 +94,10 @@ ok(shadew && (await (await sget("pulse.hiring", shadew.discordId)).json()).allow
 ok(hiring.length === 1 && hiring[0] === "shadew_", "only shadew_ holds pulse.hiring in portal_dev");
 ok((await (await sget("pulse.hiring", other.discordId)).json()).allowed === false, `${other.username} pulse.hiring false`);
 ok((await (await sget("pulse", shadew.discordId)).json()).allowed === true, "shadew_ pulse true");
+ok((await (await sget("pulse.hiring", shadew.discordId, SECRET, shadew.id)).json()).allowed === true, "shadew_ pulse.hiring true with matching portalUserId");
+ok((await (await sget("pulse.hiring", shadew.discordId, SECRET, other.id)).json()).allowed === false, "shadew_ Discord id + someone else's portalUserId false");
+ok(Object.values((await (await spost({ discordId: shadew.discordId, portalUserId: other.id, grants: ["pulse", "pulse.hiring"] })).json()).allowed).every((v) => v === false), "POST mismatched pair all false");
+ok((await spost({ discordId: shadew.discordId, portalUserId: 5, grants: ["pulse"] })).status === 400, "POST non-string portalUserId 400");
 const wrong = await sget("pulse.hiring", shadew.discordId, SECRET.slice(0, -1) + (SECRET.endsWith("0") ? "1" : "0"));
 ok(wrong.status === 401 && (await wrong.json()).allowed === false, "wrong secret 401 false");
 const none = await sget("pulse.hiring", shadew.discordId, null);
