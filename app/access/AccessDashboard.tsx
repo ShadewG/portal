@@ -187,7 +187,7 @@ export default function AccessDashboard({ can, isOwner }: { can: Can; isOwner: b
               <MatrixView state={state} list={filtered} manage={manage}
                 onSaved={async (changeId, n) => { await load(); setToast({ text: `Saved ${n} changes.`, undo: changeId ?? undefined }); }} />
             )}
-            {tab === "audit" && <AuditView people={people} manage={manage} personFilter={auditPerson} setPersonFilter={setAuditPerson} onUndone={load} />}
+            {tab === "audit" && <AuditView people={people} catalog={state.catalog} manage={manage} personFilter={auditPerson} setPersonFilter={setAuditPerson} onUndone={load} />}
             {tab === "pending" && <PendingView />}
             {tab === "presets" && <PresetsView state={state} manage={manage} reload={load} notify={(text) => setToast({ text })} />}
             {tab === "admins" && <AdminsView people={people} isOwner={isOwner} reload={load} notify={(text, error) => setToast({ text, error })} />}
@@ -628,17 +628,17 @@ function MatrixView({ state, list, manage, onSaved }: {
 
 // ---------- audit log ----------
 
-function plainRefusal(msg: string): string {
+function plainRefusal(msg: string, label: (id: string) => string): string {
   if (/already reverted/.test(msg)) return "Already undone.";
   const m = msg.match(/^(.*) changed since$/);
-  if (m) return `${m[1]} changed after this. Undo the newer change first.`;
+  if (m) return `${label(m[1])} changed after this. Undo the newer change first.`;
   if (/user is gone/.test(msg)) return "That person no longer exists.";
   if (/pre-grant/.test(msg)) return "Pre-grants by email cannot be undone here.";
   return msg.charAt(0).toUpperCase() + msg.slice(1) + ".";
 }
 
-function AuditView({ people, manage, personFilter, setPersonFilter, onUndone }: {
-  people: Person[]; manage: boolean; personFilter: string; setPersonFilter: (id: string) => void; onUndone: () => Promise<void>;
+function AuditView({ people, catalog, manage, personFilter, setPersonFilter, onUndone }: {
+  people: Person[]; catalog: Grant[]; manage: boolean; personFilter: string; setPersonFilter: (id: string) => void; onUndone: () => Promise<void>;
 }) {
   const [actor, setActor] = useState("");
   const [changes, setChanges] = useState<Change[] | null>(null);
@@ -681,7 +681,7 @@ function AuditView({ people, manage, personFilter, setPersonFilter, onUndone }: 
       await api("/api/access/admin/revert", { method: "POST", body: { changeId: c.changeId } });
       await Promise.all([reload(), onUndone()]);
     } catch (e) {
-      setUndoErr((u) => ({ ...u, [c.changeId]: plainRefusal((e as Error).message) }));
+      setUndoErr((u) => ({ ...u, [c.changeId]: plainRefusal((e as Error).message, (id) => catalog.find((g) => g.id === id)?.label ?? id) }));
     } finally {
       setBusy(null);
     }
