@@ -1,11 +1,12 @@
+import type { NextRequest } from "next/server";
 import { grantCatalog } from "@/lib/grants";
 import { baselineSees, guard, json, errorJson, peopleFor, presetList } from "@/lib/accessAdmin";
 
 export const dynamic = "force-dynamic";
 
 /** GET /api/access/admin: everything the /access page needs to start (R-2159 M3). Owner, access admins, Portal admins. */
-export async function GET() {
-  const v = await guard("read");
+export async function GET(req: NextRequest) {
+  const v = await guard("read", req);
   if (v instanceof Response) return v;
   try {
     return json({

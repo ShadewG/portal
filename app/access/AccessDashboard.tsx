@@ -36,11 +36,14 @@ const TABS: { id: Tab; label: string }[] = [
   { id: "pending", label: "Pre-grants" }, { id: "presets", label: "Presets" }, { id: "admins", label: "Access admins" },
 ];
 
+/** Every write is sent as JSON (the server refuses other content types and cross-site origins). */
 async function api<T>(url: string, init?: { method?: string; body?: unknown }): Promise<T> {
+  const method = init?.method ?? "GET";
+  const write = method !== "GET";
   const res = await fetch(url, {
-    method: init?.method ?? "GET",
-    headers: init?.body !== undefined ? { "Content-Type": "application/json" } : undefined,
-    body: init?.body !== undefined ? JSON.stringify(init.body) : undefined,
+    method,
+    headers: write ? { "Content-Type": "application/json" } : undefined,
+    body: write ? JSON.stringify(init?.body ?? {}) : undefined,
     cache: "no-store",
   });
   const data = await res.json().catch(() => ({}));
@@ -52,8 +55,18 @@ const when = (iso: string | null) => (iso ? new Date(iso).toLocaleString(undefin
 const stateWord = (s: string) => (s === "on" ? "on" : s === "off" ? "off" : "not set");
 const onOff = (b: boolean) => (b ? "on" : "off");
 
-function Avatar({ url, size = 24 }: { url: string | null; size?: number }) {
-  if (!url) return <span style={{ width: size, height: size, borderRadius: "50%", background: "var(--bg-elevated)", border: "1px solid var(--border)", flex: "0 0 auto" }} />;
+/** Picture for the owner; everyone else gets no avatar URL (it carries the Discord id) and sees the initial. */
+function Avatar({ url, name, size = 24 }: { url: string | null; name: string | null; size?: number }) {
+  if (!url) {
+    const initial = ((name ?? "").match(/[a-z0-9]/i)?.[0] ?? "?").toUpperCase();
+    return (
+      <span aria-hidden="true" style={{
+        width: size, height: size, borderRadius: "50%", background: "var(--bg-elevated)", border: "1px solid var(--border)",
+        flex: "0 0 auto", display: "inline-flex", alignItems: "center", justifyContent: "center",
+        fontSize: Math.max(9, Math.round(size * 0.42)), fontWeight: 600, lineHeight: 1, color: "var(--text-dim)", userSelect: "none",
+      }}>{initial}</span>
+    );
+  }
   // eslint-disable-next-line @next/next/no-img-element
   return <img src={url} alt="" width={size} height={size} style={{ borderRadius: "50%", border: "1px solid var(--border)", flex: "0 0 auto" }} />;
 }
@@ -267,7 +280,7 @@ function PeopleView({ state, list, selectedId, setSelectedId, manage, onSaved, s
       <div className="ax-list ax-card" style={{ maxHeight: "calc(100vh - 220px)", overflowY: "auto" }}>
         {list.length === 0 ? <Empty>Nobody matches. Clear the search or pick another filter.</Empty> : list.map((p) => (
           <button key={p.id} className="ax-person-item" aria-current={p.id === selectedId} onClick={() => setSelectedId(p.id)}>
-            <Avatar url={p.avatarUrl} size={28} />
+            <Avatar url={p.avatarUrl} name={p.username} size={28} />
             <span style={{ flex: 1, minWidth: 0 }}>
               <span style={{ display: "block", fontSize: 12, fontWeight: 600, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{p.username}</span>
               <span style={{ display: "block", fontSize: 10, color: "var(--text-muted)", marginTop: 2 }}>
@@ -371,7 +384,7 @@ function PersonDetail({ state, person, manage, onSaved, onBack, showHistory }: {
     <div>
       <button className="ax-btn ax-back" onClick={onBack} style={{ marginBottom: 12 }}>← People</button>
       <div className="ax-card" style={{ padding: 14, marginBottom: 12, display: "flex", flexWrap: "wrap", alignItems: "center", gap: 12 }}>
-        <Avatar url={person.avatarUrl} size={40} />
+        <Avatar url={person.avatarUrl} name={person.username} size={40} />
         <div style={{ flex: "1 1 160px", minWidth: 0 }}>
           <div style={{ fontSize: 14, fontWeight: 700, overflowWrap: "anywhere" }}>{person.username}</div>
           <div style={{ marginTop: 4 }}><Badges p={person} /></div>
@@ -522,7 +535,7 @@ function MatrixView({ state, list, manage, onSaved }: {
                   <tr key={p.id}>
                     <td className="ax-sticky">
                       <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
-                        <Avatar url={p.avatarUrl} size={20} />
+                        <Avatar url={p.avatarUrl} name={p.username} size={20} />
                         <span style={{ fontWeight: 600, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{p.username}</span>
                       </div>
                     </td>
@@ -554,7 +567,7 @@ function MatrixView({ state, list, manage, onSaved }: {
             {list.map((p) => (
               <div key={p.id} className="ax-card" style={{ padding: 12, marginBottom: 10 }}>
                 <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 8 }}>
-                  <Avatar url={p.avatarUrl} size={24} />
+                  <Avatar url={p.avatarUrl} name={p.username} size={24} />
                   <span style={{ fontWeight: 700, fontSize: 12, flex: 1, minWidth: 0, overflowWrap: "anywhere" }}>{p.username}</span>
                   <Badges p={p} />
                 </div>
@@ -901,7 +914,7 @@ function AdminsView({ people, isOwner, reload, notify }: { people: Person[]; isO
   };
   const line = (p: Person, removable: boolean) => (
     <div key={p.id} style={{ display: "flex", alignItems: "center", gap: 10, padding: "10px 12px", borderTop: "1px solid var(--border)", flexWrap: "wrap" }}>
-      <Avatar url={p.avatarUrl} size={28} />
+      <Avatar url={p.avatarUrl} name={p.username} size={28} />
       <span style={{ fontWeight: 600, fontSize: 12, flex: 1, minWidth: 0 }}>{p.username}</span>
       <Badges p={p} />
       {removable && isOwner && (confirm === p.id ? (

@@ -5,7 +5,7 @@ export const dynamic = "force-dynamic";
 
 /** PATCH { name, description?, grantIds } / DELETE one preset. Owner or access admin. Never changes anyone's access. */
 export async function PATCH(req: NextRequest, ctx: { params: Promise<{ id: string }> }) {
-  const v = await guard("manage");
+  const v = await guard("manage", req);
   if (v instanceof Response) return v;
   try {
     await updatePreset((await ctx.params).id, await bodyOf(req));
@@ -15,8 +15,8 @@ export async function PATCH(req: NextRequest, ctx: { params: Promise<{ id: strin
   }
 }
 
-export async function DELETE(_req: NextRequest, ctx: { params: Promise<{ id: string }> }) {
-  const v = await guard("manage");
+export async function DELETE(req: NextRequest, ctx: { params: Promise<{ id: string }> }) {
+  const v = await guard("manage", req);
   if (v instanceof Response) return v;
   try {
     await deletePreset((await ctx.params).id);

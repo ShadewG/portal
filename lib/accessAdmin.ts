@@ -1,9 +1,12 @@
+import { createHmac } from "node:crypto";
+import type { NextRequest } from "next/server";
 import { prisma } from "@/lib/db";
 import { auth } from "@/auth";
+import { portalOrigin } from "@/lib/portalOrigin";
 import { grantAllowed, isOwner, type AccessContext } from "@/lib/access";
 import { grantCatalog, getGrant, isKnownGrant } from "@/lib/grants";
 import {
-  ACCESS_ADMIN_GRANT, AccessChangeError, accessErrorStatus, accessLevelOf, targetRefusal,
+  ACCESS_ADMIN_GRANT, AccessChangeError, accessErrorStatus, accessLevelOf, checkBatchShape, targetRefusal,
   type Actor, type Level,
 } from "@/lib/accessChanges";
 
@@ -12,7 +15,8 @@ import {
  * and what they may do. Owner + access admins: "manage" (change things). Other Portal admins: "read" (see only; they
  * keep the old /admin page). Everyone else: null (the routes answer 404, the page is notFound()).
  * What a person can see is always computed with lib/access.ts grantAllowed (never a second copy of the rule).
- * Names only in what we return: never Discord ids as text (avatar URLs carry them, as everywhere in Portal).
+ * Names only in what we return. Emails and Discord ids (avatar URLs carry them) go to the OWNER only: access admins
+ * and read-only Portal admins get masked emails (a***@domain) and avatarUrl null (the page shows initials).
  */
 
 export type ViewerCan = "manage" | "read";
@@ -33,18 +37,79 @@ const NO_STORE = { "Cache-Control": "private, no-store" };
 export const json = (body: unknown, status = 200) => Response.json(body, { status, headers: NO_STORE });
 export const notFound = () => json({ error: "Not found" }, 404);
 
-/** Route guard: 404 for anyone who may not see the dashboard, 403 for read-only viewers on writes. */
-export async function guard(need: ViewerCan): Promise<Viewer | Response> {
+/**
+ * CSRF check for every non-GET request: the Origin header must be the Portal's own origin (lib/portalOrigin.ts, or
+ * AUTH_URL's origin) and the body must be declared JSON. A cross-site form or no-cors fetch cannot do both.
+ */
+function refuseCrossSite(req: NextRequest): Response | null {
+  if (req.method === "GET" || req.method === "HEAD") return null;
+  const allowed = new Set<string>([portalOrigin(req)]);
+  const configured = process.env.AUTH_URL ?? process.env.NEXTAUTH_URL;
+  if (configured) {
+    try { allowed.add(new URL(configured).origin); } catch { /* bad AUTH_URL: only portalOrigin counts */ }
+  }
+  const origin = req.headers.get("origin");
+  if (!origin || !allowed.has(origin)) return json({ error: "Refused: this request did not come from the Portal page." }, 403);
+  const type = (req.headers.get("content-type") ?? "").split(";")[0].trim().toLowerCase();
+  if (type !== "application/json") return json({ error: "Refused: the request must be sent as JSON." }, 403);
+  return null;
+}
+
+/** Route guard: 404 for anyone who may not see the dashboard, 403 for cross-site or non-JSON writes (any viewer),
+ *  403 for read-only viewers on writes. Every /api/access/admin route passes its request. */
+export async function guard(need: ViewerCan, req: NextRequest): Promise<Viewer | Response> {
   const v = await viewerOf(await auth());
   if (!v) return notFound();
+  const refused = refuseCrossSite(req);
+  if (refused) return refused;
   if (need === "manage" && v.can !== "manage") return json({ error: "You can look but not change access." }, 403);
   return v;
 }
 
-/** Error to response: AccessChangeError keeps its plain message; anything else is a generic 500 (logged, no input). */
+// ---------- Portal user ids that carry a Discord id ----------
+// Most User.id values are cuids, but some rows were made by hand as "portal_<discordId>". Non-owners get those as an
+// opaque "u_<hmac>" ref instead; every route that takes a user id from the client resolves refs with userIdOf().
+
+const HAS_DISCORD_ID = /\d{15,}/;
+const refOf = (id: string) =>
+  "u_" + createHmac("sha256", process.env.AUTH_SECRET ?? process.env.NEXTAUTH_SECRET ?? "access-ref").update(id).digest("hex").slice(0, 24);
+
+/** The user id as this viewer may see it: unchanged for the owner and for ids without a Discord id in them. */
+export function publicId(viewer: Viewer, id: string): string {
+  return viewer.isOwner || !HAS_DISCORD_ID.test(id) ? id : refOf(id);
+}
+
+/** Client user id or "u_" ref -> the real User.id (unknown refs come back unchanged, so lookups answer "no such user"). */
+export async function userIdOf(ref: unknown): Promise<unknown> {
+  if (typeof ref !== "string" || !ref.startsWith("u_")) return ref;
+  const rows = await prisma.$queryRaw<{ id: string }[]>`SELECT id FROM "User" WHERE id ~ '[0-9]{15,}'`;
+  return rows.find((r) => refOf(r.id) === ref)?.id ?? ref;
+}
+
+/** Batch items with refs resolved (shape is checked afterwards by checkBatchShape). */
+export async function resolveItems(items: unknown): Promise<unknown> {
+  if (!Array.isArray(items)) return items;
+  return Promise.all(items.map(async (it) =>
+    it && typeof it === "object" && !Array.isArray(it) ? { ...(it as object), userId: await userIdOf((it as { userId?: unknown }).userId) } : it));
+}
+
+/** Email as non-owners see it: first letter + *** + @domain. */
+export function maskEmail(email: string): string {
+  const at = email.lastIndexOf("@");
+  if (at < 1) return "***";
+  return `${email[0]}***${email.slice(at)}`;
+}
+
+/** Error to response: AccessChangeError keeps its plain message; anything else is a generic 500 (logged: error
+ *  name and code only, never the message, which can carry input or row data). */
 export function errorJson(where: string, err: unknown) {
   const status = accessErrorStatus(err);
-  if (status === 500) console.error(`[/api/access/admin ${where}] Error:`, String(err));
+  if (status === 500) {
+    const e = err as { name?: unknown; code?: unknown } | null;
+    const name = typeof e?.name === "string" ? e.name : typeof err;
+    const code = typeof e?.code === "string" || typeof e?.code === "number" ? String(e.code) : "-";
+    console.error(`[/api/access/admin ${where}] Error: name=${name} code=${code}`);
+  }
   return json({ error: status === 500 ? "Something went wrong. Nothing was saved." : (err as Error).message }, status);
 }
 
@@ -53,7 +118,9 @@ export async function bodyOf(req: Request): Promise<Record<string, unknown>> {
   return b && typeof b === "object" && !Array.isArray(b) ? (b as Record<string, unknown>) : {};
 }
 
-export function avatarUrl(discordId: string, avatar: string | null): string | null {
+/** Avatar URL (it contains the Discord id): owner only, null for everyone else. */
+export function avatarUrl(viewer: Viewer, discordId: string, avatar: string | null): string | null {
+  if (!viewer.isOwner) return null;
   return avatar ? `https://cdn.discordapp.com/avatars/${discordId}/${avatar}.png?size=64` : null;
 }
 
@@ -100,7 +167,8 @@ export async function previewOf(userId: string, staged: Record<string, boolean>)
 export interface StagedItem { userId: string; changes: { grantId: string; granted: boolean; expect?: boolean }[] }
 
 /** Dry run of a batch: per person, the stored changes (old -> new) and what they gain or lose seeing. Writes nothing. */
-export async function dryRun(items: StagedItem[]) {
+export async function dryRun(viewer: Viewer, items: StagedItem[]) {
+  checkBatchShape(items, { requireExpect: true });
   const ids = items.map((i) => i.userId);
   const users = await prisma.user.findMany({ where: { id: { in: ids } }, include: { access: true } });
   const byId = new Map(users.map((u) => [u.id, u]));
@@ -119,7 +187,7 @@ export async function dryRun(items: StagedItem[]) {
     applyStaged(granted, staged);
     const after = new Set(seesWith(u, granted));
     return {
-      userId: u.id, username: u.username, changes,
+      userId: publicId(viewer, u.id), username: u.username, changes,
       gains: [...after].filter((g) => !before.has(g)),
       loses: [...before].filter((g) => !after.has(g)),
     };
@@ -140,9 +208,9 @@ export async function peopleFor(viewer: Viewer) {
       ? "read only"
       : targetRefusal(viewer.actor, viewer.level, u);
     return {
-      id: u.id,
+      id: publicId(viewer, u.id),
       username: u.username,
-      avatarUrl: avatarUrl(u.discordId, u.avatar),
+      avatarUrl: avatarUrl(viewer, u.discordId, u.avatar),
       isOwner: isOwner(u.discordId),
       isAdmin: u.isAdmin || isOwner(u.discordId),
       isAccessAdmin: u.isAccessAdmin,
@@ -156,7 +224,7 @@ export async function peopleFor(viewer: Viewer) {
 
 // ---------- pre-grants by email ----------
 
-export async function pendingList() {
+export async function pendingList(viewer: Viewer) {
   const rows = await prisma.pendingAppAccess.findMany({ orderBy: { createdAt: "desc" } });
   const emails = [...new Set(rows.map((r) => r.email))];
   const users = emails.length ? await prisma.user.findMany({ where: { email: { in: emails } }, select: { id: true, email: true, username: true } }) : [];
@@ -174,7 +242,7 @@ export async function pendingList() {
     else if (user) status = "waiting for re-sign-in";
     else status = "waiting for first sign-in";
     return {
-      id: r.id, email: r.email, grantId: r.appId, grantLabel: getGrant(r.appId)?.label ?? r.appId, granted: r.granted,
+      id: r.id, email: viewer.isOwner ? r.email : maskEmail(r.email), grantId: r.appId, grantLabel: getGrant(r.appId)?.label ?? r.appId, granted: r.granted,
       status, createdAt: r.createdAt, resolvedAt: r.resolvedAt,
       person: r.resolvedUserId ? nameOfId.get(r.resolvedUserId) ?? null : user?.username ?? null,
       by: r.grantedBy ? names.get(r.grantedBy) ?? "someone" : null,
@@ -197,7 +265,7 @@ export function grantLabel(id: string): string {
 }
 
 /** Changes newest first, grouped by change id. Filters: person (Portal user id), actor (Portal user id). */
-export async function auditList(opts: { person?: string; actor?: string; page?: number; pageSize?: number }) {
+export async function auditList(viewer: Viewer, opts: { person?: string; actor?: string; page?: number; pageSize?: number }) {
   const pageSize = Math.min(Math.max(opts.pageSize ?? 25, 1), 100);
   const page = Math.max(opts.page ?? 0, 0);
   const where: { targetUserId?: string; actor?: string } = {};
@@ -226,7 +294,7 @@ export async function auditList(opts: { person?: string; actor?: string; page?: 
   const userName = new Map(users.map((u) => [u.id, u.username]));
   const pendingIds = rows.map((r) => r.targetUserId).filter((t) => t.startsWith("pending:")).map((t) => t.slice(8));
   const pend = pendingIds.length ? await prisma.pendingAppAccess.findMany({ where: { id: { in: pendingIds } }, select: { id: true, email: true } }) : [];
-  const pendEmail = new Map(pend.map((p) => [p.id, p.email]));
+  const pendEmail = new Map(pend.map((p) => [p.id, viewer.isOwner ? p.email : maskEmail(p.email)]));
   const actorNames = await namesForDiscordIds([...rows.map((r) => r.actor), ...reverts.map((r) => r.actor)]);
   const actorLabel = (id: string, fallback: string | null) =>
     id === "pending-email" ? "pre-grant by email (automatic)" : actorNames.get(id) ?? fallback ?? "unknown";
@@ -252,7 +320,7 @@ export async function auditList(opts: { person?: string; actor?: string; page?: 
         undoneBy: undo ? actorLabel(undo.actor, undo.actorName) : null,
         pending: rs.some((r) => r.targetUserId.startsWith("pending:")),
         rows: rs.map((r) => ({
-          person: targetLabel(r.targetUserId), personId: r.targetUserId.startsWith("pending:") ? null : r.targetUserId,
+          person: targetLabel(r.targetUserId), personId: r.targetUserId.startsWith("pending:") ? null : publicId(viewer, r.targetUserId),
           grantId: r.grantId, grant: grantLabel(r.grantId), from: r.oldState, to: r.newState,
         })),
       };

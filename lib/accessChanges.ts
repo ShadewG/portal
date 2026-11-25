@@ -186,6 +186,39 @@ export interface BatchResult { changeId: string | null; people: { userId: string
 export const MAX_BATCH_CHANGES = 1000;
 
 /**
+ * Shape checks for a batch (shared by the real save and the dashboard dry run): a non-empty list, each person once
+ * with a non-empty change list, catalog grant ids, boolean granted/expect, no grant twice per person, at most
+ * MAX_BATCH_CHANGES in all. opts.requireExpect (the /access changes route): every change must carry expect.
+ * Returns the grant ids touched. Throws AccessChangeError("bad_request") on anything else.
+ */
+export function checkBatchShape(items: unknown, opts: { requireExpect?: boolean } = {}): Set<string> {
+  if (!Array.isArray(items) || items.length === 0) throw new AccessChangeError("bad_request", "no changes");
+  const people = new Set<string>();
+  const grantIds = new Set<string>();
+  let total = 0;
+  for (const item of items as BatchItem[]) {
+    if (!item || typeof item !== "object" || typeof item.userId !== "string" || !item.userId || !Array.isArray(item.changes) || item.changes.length === 0) {
+      throw new AccessChangeError("bad_request", "userId and changes are required");
+    }
+    if (people.has(item.userId)) throw new AccessChangeError("bad_request", "a person is listed twice");
+    people.add(item.userId);
+    total += item.changes.length;
+    if (total > MAX_BATCH_CHANGES) throw new AccessChangeError("bad_request", `too many changes at once (max ${MAX_BATCH_CHANGES})`);
+    const seen = new Set<string>();
+    for (const c of item.changes) {
+      if (!c || typeof c !== "object" || !isKnownGrant(c.grantId)) throw new AccessChangeError("bad_request", "unknown grant");
+      if (typeof c.granted !== "boolean") throw new AccessChangeError("bad_request", `granted must be true or false: ${c.grantId}`);
+      if (c.expect !== undefined && typeof c.expect !== "boolean") throw new AccessChangeError("bad_request", `expect must be true or false: ${c.grantId}`);
+      if (opts.requireExpect && c.expect === undefined) throw new AccessChangeError("bad_request", `expect is required: ${c.grantId}`);
+      if (seen.has(c.grantId)) throw new AccessChangeError("bad_request", `grant listed twice: ${c.grantId}`);
+      seen.add(c.grantId);
+      grantIds.add(c.grantId);
+    }
+  }
+  return grantIds;
+}
+
+/**
  * Change grants for several people in ONE transaction under ONE change id (R-2159 M3 bulk matrix), so one revert
  * undoes the whole batch. Same rules as setGrants for every person in it (catalog, writer rights, target guards).
  * All or nothing: any refusal writes nothing.
@@ -196,28 +229,7 @@ export async function setGrantsMany(
   note?: string | null,
   opts: { allowPortalAdmin?: boolean } = {},
 ): Promise<BatchResult> {
-  if (!Array.isArray(items) || items.length === 0) throw new AccessChangeError("bad_request", "no changes");
-  const people = new Set<string>();
-  const grantIds = new Set<string>();
-  let total = 0;
-  for (const item of items) {
-    if (!item || typeof item.userId !== "string" || !item.userId || !Array.isArray(item.changes) || item.changes.length === 0) {
-      throw new AccessChangeError("bad_request", "userId and changes are required");
-    }
-    if (people.has(item.userId)) throw new AccessChangeError("bad_request", "a person is listed twice");
-    people.add(item.userId);
-    const seen = new Set<string>();
-    for (const c of item.changes) {
-      if (!isKnownGrant(c?.grantId)) throw new AccessChangeError("bad_request", "unknown grant");
-      if (typeof c.granted !== "boolean") throw new AccessChangeError("bad_request", `granted must be true or false: ${c.grantId}`);
-      if (c.expect !== undefined && typeof c.expect !== "boolean") throw new AccessChangeError("bad_request", `expect must be true or false: ${c.grantId}`);
-      if (seen.has(c.grantId)) throw new AccessChangeError("bad_request", `grant listed twice: ${c.grantId}`);
-      seen.add(c.grantId);
-      grantIds.add(c.grantId);
-    }
-    total += item.changes.length;
-  }
-  if (total > MAX_BATCH_CHANGES) throw new AccessChangeError("bad_request", `too many changes at once (max ${MAX_BATCH_CHANGES})`);
+  const grantIds = checkBatchShape(items);
   const auth = await requireWriter(actor, [...grantIds], opts.allowPortalAdmin === true);
   const changeId = randomUUID();
   const result = await prisma.$transaction(async (tx) => {
