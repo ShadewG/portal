@@ -1,6 +1,11 @@
 -- R-2159 M2 (25 Nov 2026): access admins, role presets, audit log. Additive only (1 column with a default, 2 new tables).
 -- Generated: prisma migrate diff --from-schema <schema at 66fa718> --to-schema prisma/schema.prisma --script.
 -- Applied ONLY to portal_dev on worker-3 (psql --single-transaction). Production keeps prisma db push; not applied there.
+-- Apply BEFORE deploying the M2 code (the new client selects User.isAccessAdmin). Undo: 20261125_m2_access.down.sql.
+-- Run with psql --single-transaction -v ON_ERROR_STOP=1: lock_timeout makes the ALTER give up after 5 s instead of
+-- queueing behind a long query and blocking every User read behind it.
+
+SET lock_timeout = '5s';
 
 -- AlterTable
 ALTER TABLE "User" ADD COLUMN     "isAccessAdmin" BOOLEAN NOT NULL DEFAULT false;
