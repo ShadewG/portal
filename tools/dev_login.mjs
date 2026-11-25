@@ -3,7 +3,8 @@
 // It builds the same Auth.js session token the real Discord sign-in sets (auth.ts jwt callback claims),
 // encrypted with this copy's AUTH_SECRET, the same way app/api/auth/desktop/poll does.
 //
-// Usage (from the repo dir, as the service user):  node tools/dev_login.mjs <username|discordId> [--header]
+// Usage (from the repo dir, as the service user):  node tools/dev_login.mjs <username|discordId> [--header] [--verified]
+// --verified sets emailVerified (Discord's "verified" flag) so pre-grants by email apply (lib/pendingAccess.ts).
 // Prints the cookie as name=value (or a full "Cookie: ..." header with --header). Use it with curl -b or a browser.
 //
 // Refuses to run unless ALL of these hold, so it can never work against production:
@@ -66,6 +67,7 @@ const token = await encode({
     username: user.username,
     globalName: user.username,
     isAdmin: user.discordId === process.env.ADMIN_DISCORD_ID,
+    emailVerified: args.includes("--verified"),
   },
 });
 
