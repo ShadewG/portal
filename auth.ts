@@ -23,6 +23,8 @@ export const { handlers, signIn, signOut, auth } = NextAuth({
         token.username = (profile as Record<string, unknown>).username;
         token.globalName = (profile as Record<string, unknown>).global_name;
         token.isAdmin = profile.id === process.env.ADMIN_DISCORD_ID;
+        // Discord's own "email is verified" flag (R-2159 risk 9: pre-grants by email need it, lib/pendingAccess.ts)
+        token.emailVerified = (profile as Record<string, unknown>).verified === true;
         // Flag for post-login upsert
         token.needsSync = true;
       }
@@ -36,6 +38,7 @@ export const { handlers, signIn, signOut, auth } = NextAuth({
         u.username = token.username;
         u.globalName = token.globalName;
         u.isAdmin = token.isAdmin;
+        u.emailVerified = token.emailVerified === true;
       }
       return session;
     },

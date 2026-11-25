@@ -13,6 +13,8 @@ model User {
   avatar    String?
   email     String?
   isAdmin   Boolean  @default(false)
+  /// R-2159: may change other people's grants (lib/accessAdmin.ts). The owner (ADMIN_DISCORD_ID) always may.
+  isAccessAdmin Boolean @default(false)
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
   access    AppAccess[]
@@ -58,4 +60,39 @@ model PendingAppAccess {
   resolvedUserId String?
 
   @@unique([email, appId])
+}
+
+/// R-2159: a role preset = a named bundle of grant ids (lib/grants.ts). Presets only fill toggles; the stored truth
+/// stays the per-person AppAccess rows, so editing a preset never changes anyone's access.
+model AccessRole {
+  id          String   @id @default(cuid())
+  name        String   @unique
+  description String?
+  grantIds    String[]
+  createdBy   String?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+}
+
+/// R-2159: one row per changed grant. Rows written together share changeId (one "change", revertable as a whole).
+/// state values: "none" (no AppAccess row), "on" (granted true), "off" (granted false).
+/// No foreign keys on purpose: the log outlives deleted users.
+model AccessAudit {
+  id            String   @id @default(cuid())
+  changeId      String
+  at            DateTime @default(now())
+  actor         String
+  actorName     String?
+  targetUserId  String
+  grantId       String
+  oldState      String
+  newState      String
+  oldGrantedBy  String?
+  oldGrantedAt  DateTime?
+  note          String?
+  revertOf      String?
+
+  @@index([changeId])
+  @@index([targetUserId, at])
+  @@index([revertOf])
 }

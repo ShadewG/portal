@@ -3,10 +3,8 @@ import { auth } from "@/auth";
 import { prisma } from "@/lib/db";
 import { getAppById } from "@/lib/apps";
 import { signAppToken } from "@/lib/jwt";
-import { permittedAppIds } from "@/lib/access";
-import { FRONTWIND_DUBBING_APP_ID, isFrontwindDubbingAllowed } from "@/lib/frontwindAccess";
-import { CASES_DASHBOARD_APP_ID, isCasesDashboardAllowed } from "@/lib/casesAccess";
-import { RENDER_FARM_APP_ID } from "@/lib/renderfarmAccess";
+import { appAllowed, grantedIds, permittedAppIds } from "@/lib/access";
+import { applyPendingGrants } from "@/lib/pendingAccess";
 import { portalOrigin } from "@/lib/portalOrigin";
 import { syncTeamDesk, type TeamCheck } from "@/lib/teamAccess";
 
@@ -107,47 +105,15 @@ export async function GET(req: NextRequest) {
     create: { discordId, username, avatar, email, isAdmin: envAdmin },
   });
 
-  if (dbUser.email) {
-    const pending = await prisma.pendingAppAccess.findMany({
-      where: { email: dbUser.email, granted: true, resolvedAt: null },
-    });
-
-    if (pending.length > 0) {
-      await prisma.$transaction([
-        ...pending.map((row) =>
-          prisma.appAccess.upsert({
-            where: { userId_appId: { userId: dbUser.id, appId: row.appId } },
-            update: { granted: true },
-            create: { userId: dbUser.id, appId: row.appId, granted: true },
-          })
-        ),
-        prisma.pendingAppAccess.updateMany({
-          where: { id: { in: pending.map((row) => row.id) } },
-          data: { resolvedAt: new Date(), resolvedUserId: dbUser.id },
-        }),
-      ]);
-    }
-  }
+  // pre-grants by email: only for a Discord-verified email (lib/pendingAccess.ts, R-2159 risk 9)
+  await applyPendingGrants(dbUser, user);
 
   // Desk + Production: the team rule grants or turns off this person's Desk grant first (lib/teamAccess.ts)
   const team = appId === "desk" ? await syncTeamDesk({ id: dbUser.id, discordId }) : null;
 
-  const accessRows = await prisma.appAccess.findMany({
-    where: { userId: dbUser.id, appId, granted: true },
-  });
-
   const isAdmin = dbUser.isAdmin || envAdmin;
-  const hasAccess = app.allowedDiscordId
-    ? discordId === app.allowedDiscordId && accessRows.length > 0
-    : appId === CASES_DASHBOARD_APP_ID
-    ? isCasesDashboardAllowed(user)
-    : appId === FRONTWIND_DUBBING_APP_ID
-      ? accessRows.length > 0 && isFrontwindDubbingAllowed(user)
-      : appId === RENDER_FARM_APP_ID
-        ? (await permittedAppIds({ id: dbUser.id, isAdmin }, user)).includes(appId)
-      : app.requireExplicitGrant
-        ? accessRows.length > 0
-        : app.allowAnyAuthenticatedUser || isAdmin || accessRows.length > 0;
+  // one rule for every route (lib/access.ts)
+  const hasAccess = appAllowed(app, { discordId, user, isAdmin, granted: await grantedIds(dbUser.id) });
 
   if (!hasAccess && appId === "desk") return teamOnlyPage(portalOrigin(req), username, team);
   if (!hasAccess) {

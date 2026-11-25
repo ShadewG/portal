@@ -1,9 +1,7 @@
 import { auth } from "@/auth";
 import { prisma } from "@/lib/db";
-import { allApps } from "@/lib/apps";
-import { FRONTWIND_DUBBING_APP_ID, isFrontwindDubbingAllowed } from "@/lib/frontwindAccess";
-import { CASES_DASHBOARD_APP_ID, isCasesDashboardAllowed } from "@/lib/casesAccess";
-import { RENDER_FARM_APP_ID, isRenderFarmViewer } from "@/lib/renderfarmAccess";
+import { accessMap } from "@/lib/access";
+import { applyPendingGrants } from "@/lib/pendingAccess";
 import { syncTeamDesk } from "@/lib/teamAccess";
 
 /** GET /api/me — upsert user + return access map */
@@ -35,27 +33,8 @@ export async function GET() {
       include: { access: true },
     });
 
-    if (dbUser.email) {
-      const pending = await prisma.pendingAppAccess.findMany({
-        where: { email: dbUser.email, granted: true, resolvedAt: null },
-      });
-
-      if (pending.length > 0) {
-        await prisma.$transaction([
-          ...pending.map((row) =>
-            prisma.appAccess.upsert({
-              where: { userId_appId: { userId: dbUser.id, appId: row.appId } },
-              update: { granted: true },
-              create: { userId: dbUser.id, appId: row.appId, granted: true },
-            })
-          ),
-          prisma.pendingAppAccess.updateMany({
-            where: { id: { in: pending.map((row) => row.id) } },
-            data: { resolvedAt: new Date(), resolvedUserId: dbUser.id },
-          }),
-        ]);
-      }
-    }
+    // pre-grants by email: only for a Discord-verified email (lib/pendingAccess.ts, R-2159 risk 9)
+    await applyPendingGrants(dbUser, user);
 
     // a newcomer on the team sees Desk in the bar straight away (lib/teamAccess.ts; only someone with no Desk row is looked up)
     await syncTeamDesk({ id: dbUser.id, discordId }, { grantOnly: true });
@@ -64,27 +43,13 @@ export async function GET() {
       where: { userId: dbUser.id, granted: true },
     });
 
-    const access: Record<string, boolean> = {};
-    for (const app of allApps) {
-      const hasAppAccess = accessRows.some((a) => a.appId === app.id);
-      if (app.allowedDiscordId) {
-        access[app.id] = discordId === app.allowedDiscordId && hasAppAccess;
-      } else if (app.id === CASES_DASHBOARD_APP_ID) {
-        access[app.id] = isCasesDashboardAllowed(user);
-      } else if (app.id === FRONTWIND_DUBBING_APP_ID) {
-        access[app.id] = hasAppAccess && isFrontwindDubbingAllowed(user);
-      } else if (app.id === RENDER_FARM_APP_ID) {
-        access[app.id] = isRenderFarmViewer(dbUser.isAdmin, accessRows.map((a) => a.appId));
-      } else if (app.requireExplicitGrant) {
-        access[app.id] = hasAppAccess;
-      } else if (app.allowAnyAuthenticatedUser) {
-        access[app.id] = true;
-      } else if (dbUser.isAdmin) {
-        access[app.id] = true;
-      } else {
-        access[app.id] = hasAppAccess;
-      }
-    }
+    // one rule for every route (lib/access.ts)
+    const access = accessMap({
+      discordId,
+      user,
+      isAdmin: dbUser.isAdmin,
+      granted: new Set(accessRows.map((a) => a.appId)),
+    });
 
     return Response.json({ discordId, isAdmin: dbUser.isAdmin, access });
   } catch (err) {
