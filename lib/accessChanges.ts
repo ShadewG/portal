@@ -8,7 +8,7 @@ import { isOwner } from "@/lib/access";
  * Audited access changes (R-2159 M2). Every write to a person's grants goes through here: AppAccess rows and their
  * AccessAudit rows are written in one transaction under one change id, and a change can be reverted as a whole.
  * Only the owner (ADMIN_DISCORD_ID) and named access admins (User.isAccessAdmin) may change grants; only the owner
- * may name access admins. Checked here, server-side, on every call, fail closed. No UI yet (M3).
+ * may name access admins. Checked here, server-side, on every call, fail closed. UI: /access (M3).
  *
  * Exception kept from before M2 (needs Samuel's OK to tighten): the old /admin tick boxes (PATCH /api/admin and
  * /api/admin/pending-access) still let any Portal admin (User.isAdmin) change APP grants. They now come through here
@@ -41,7 +41,7 @@ function stateOf(row: { granted: boolean } | null | undefined): GrantState {
   return !row ? "none" : row.granted ? "on" : "off";
 }
 
-type Level = "owner" | "access-admin" | "portal-admin" | null;
+export type Level = "owner" | "access-admin" | "portal-admin" | null;
 interface Authority { level: Level; userId: string | null }
 
 /** Who the actor is for access changes, by Discord id only. Fails closed (level null on any error). */
@@ -59,6 +59,19 @@ async function authorityOf(actor: Actor | null | undefined): Promise<Authority> 
     console.error("[access] authority lookup failed", String(err));
     return { level: null, userId: null };
   }
+}
+
+/** The actor's level for access changes ("owner" | "access-admin" | "portal-admin" | null). Fails closed. */
+export async function accessLevelOf(actor: Actor | null | undefined): Promise<Level> {
+  return (await authorityOf(actor)).level;
+}
+
+/** Why this actor may not change this target's grants (same rule as guardTarget), or null when they may. */
+export function targetRefusal(actor: Actor, level: Level, target: { discordId: string }): string | null {
+  if (level === "owner") return null;
+  if (isOwner(target.discordId)) return "only the owner may change the owner's access";
+  if (target.discordId === actor.discordId) return "you may not change your own access";
+  return null;
 }
 
 /** Owner, or a User row with isAccessAdmin, matched by Discord id only. Fails closed. */
@@ -93,11 +106,9 @@ async function requireWriter(actor: Actor, grantIds: string[], allowPortalAdmin:
 
 /** Target guards: nobody but the owner may change the owner's grants or their own. */
 function guardTarget(actor: Actor, auth: Authority, target: { id: string; discordId: string }) {
-  if (auth.level === "owner") return;
-  if (isOwner(target.discordId)) throw new AccessChangeError("forbidden", "only the owner may change the owner's access");
-  if (target.discordId === actor.discordId || (auth.userId && target.id === auth.userId)) {
-    throw new AccessChangeError("forbidden", "you may not change your own access");
-  }
+  const why = targetRefusal(actor, auth.level, target)
+    ?? (auth.level !== "owner" && auth.userId && target.id === auth.userId ? "you may not change your own access" : null);
+  if (why) throw new AccessChangeError("forbidden", why);
 }
 
 /** HTTP status for an AccessChangeError code (routes). */
@@ -162,22 +173,76 @@ export async function setGrants(
   if (!userId || typeof userId !== "string" || !Array.isArray(changes) || changes.length === 0) {
     throw new AccessChangeError("bad_request", "userId and changes are required");
   }
-  const seen = new Set<string>();
-  for (const c of changes) {
-    if (!isKnownGrant(c?.grantId)) throw new AccessChangeError("bad_request", "unknown grant");
-    if (typeof c.granted !== "boolean") throw new AccessChangeError("bad_request", `granted must be true or false: ${c.grantId}`);
-    if (seen.has(c.grantId)) throw new AccessChangeError("bad_request", `grant listed twice: ${c.grantId}`);
-    seen.add(c.grantId);
+  const result = await setGrantsMany(actor, [{ userId, changes }], note, opts);
+  return { changeId: result.changeId, applied: result.people[0]?.applied ?? [] };
+}
+
+/** One person's part of a batch. `expect` (optional, per change): the granted value the caller saw (no row = false);
+ *  if the stored value differs now, the whole batch is refused (conflict), so nobody saves over a newer change. */
+export interface BatchItem { userId: string; changes: (GrantChange & { expect?: boolean })[] }
+export interface BatchResult { changeId: string | null; people: { userId: string; applied: ChangeResult["applied"] }[] }
+
+/** Largest batch the dashboard may save at once (people x grants). */
+export const MAX_BATCH_CHANGES = 1000;
+
+/**
+ * Change grants for several people in ONE transaction under ONE change id (R-2159 M3 bulk matrix), so one revert
+ * undoes the whole batch. Same rules as setGrants for every person in it (catalog, writer rights, target guards).
+ * All or nothing: any refusal writes nothing.
+ */
+export async function setGrantsMany(
+  actor: Actor,
+  items: BatchItem[],
+  note?: string | null,
+  opts: { allowPortalAdmin?: boolean } = {},
+): Promise<BatchResult> {
+  if (!Array.isArray(items) || items.length === 0) throw new AccessChangeError("bad_request", "no changes");
+  const people = new Set<string>();
+  const grantIds = new Set<string>();
+  let total = 0;
+  for (const item of items) {
+    if (!item || typeof item.userId !== "string" || !item.userId || !Array.isArray(item.changes) || item.changes.length === 0) {
+      throw new AccessChangeError("bad_request", "userId and changes are required");
+    }
+    if (people.has(item.userId)) throw new AccessChangeError("bad_request", "a person is listed twice");
+    people.add(item.userId);
+    const seen = new Set<string>();
+    for (const c of item.changes) {
+      if (!isKnownGrant(c?.grantId)) throw new AccessChangeError("bad_request", "unknown grant");
+      if (typeof c.granted !== "boolean") throw new AccessChangeError("bad_request", `granted must be true or false: ${c.grantId}`);
+      if (c.expect !== undefined && typeof c.expect !== "boolean") throw new AccessChangeError("bad_request", `expect must be true or false: ${c.grantId}`);
+      if (seen.has(c.grantId)) throw new AccessChangeError("bad_request", `grant listed twice: ${c.grantId}`);
+      seen.add(c.grantId);
+      grantIds.add(c.grantId);
+    }
+    total += item.changes.length;
   }
-  const auth = await requireWriter(actor, [...seen], opts.allowPortalAdmin === true);
+  if (total > MAX_BATCH_CHANGES) throw new AccessChangeError("bad_request", `too many changes at once (max ${MAX_BATCH_CHANGES})`);
+  const auth = await requireWriter(actor, [...grantIds], opts.allowPortalAdmin === true);
+  const changeId = randomUUID();
   const result = await prisma.$transaction(async (tx) => {
-    const target = await tx.user.findUnique({ where: { id: userId }, select: { id: true, discordId: true } });
-    if (!target) throw new AccessChangeError("not_found", "no such user");
-    guardTarget(actor, auth, target);
-    return writeGrantChanges(tx, { id: actor.discordId, name: actor.username }, userId, changes, note ?? null);
+    const out: BatchResult["people"] = [];
+    for (const item of items) {
+      const target = await tx.user.findUnique({ where: { id: item.userId }, select: { id: true, discordId: true, username: true } });
+      if (!target) throw new AccessChangeError("not_found", "no such user");
+      guardTarget(actor, auth, target);
+      for (const c of item.changes) {
+        if (c.expect === undefined) continue;
+        const row = await tx.appAccess.findUnique({ where: { userId_appId: { userId: item.userId, appId: c.grantId } } });
+        if ((row?.granted === true) !== c.expect) {
+          throw new AccessChangeError("conflict", `${target.username}: ${c.grantId} changed since you loaded the page`);
+        }
+      }
+      const changes = item.changes.map(({ grantId, granted }) => ({ grantId, granted }));
+      const r = await writeGrantChanges(tx, { id: actor.discordId, name: actor.username }, item.userId, changes, note ?? null, { changeId });
+      out.push({ userId: item.userId, applied: r.applied });
+    }
+    return out;
   }, TX_OPTS);
-  console.log("[access] setGrants", { actorUserId: auth.userId, level: auth.level, userId, changeId: result.changeId, n: result.applied.length });
-  return result;
+  const n = result.reduce((sum, p) => sum + p.applied.length, 0);
+  const res: BatchResult = { changeId: n > 0 ? changeId : null, people: result };
+  console.log("[access] setGrants", { actorUserId: auth.userId, level: auth.level, people: items.length, changeId: res.changeId, n });
+  return res;
 }
 
 /** Audit target id for a pre-grant by email (the PendingAppAccess row; the email itself is never logged). */
