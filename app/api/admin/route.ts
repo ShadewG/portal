@@ -3,6 +3,7 @@ import { auth } from "@/auth";
 import { prisma } from "@/lib/db";
 import { isPortalAdmin } from "@/lib/admin";
 import { allApps } from "@/lib/apps";
+import { accessErrorStatus, setGrants } from "@/lib/accessChanges";
 
 /** GET /api/admin — list all users with their access */
 export async function GET() {
@@ -35,25 +36,29 @@ export async function GET() {
   return Response.json(result);
 }
 
-/** PATCH /api/admin — toggle access: { userId, appId, granted } */
+/** PATCH /api/admin: toggle access: { userId, appId, granted }
+ *  Any Portal admin, as before, for app grants; through lib/accessChanges.ts setGrants (catalog check + audit).
+ *  Tab grants (dotted ids) need the owner or an access admin; nobody but the owner changes the owner's or their own. */
 export async function PATCH(req: NextRequest) {
   const session = await auth();
   if (!(await isPortalAdmin(session))) {
     return Response.json({ error: "Forbidden" }, { status: 403 });
   }
 
-  const { userId, appId, granted } = await req.json();
-  if (!userId || !appId || typeof granted !== "boolean") {
+  const body = await req.json().catch(() => null);
+  const { userId, appId, granted } = (body ?? {}) as { userId?: unknown; appId?: unknown; granted?: unknown };
+  if (!userId || typeof userId !== "string" || !appId || typeof appId !== "string" || typeof granted !== "boolean") {
     return Response.json({ error: "Invalid payload" }, { status: 400 });
   }
 
-  const adminDiscordId = (session?.user as Record<string, unknown>)?.discordId as string;
-
-  await prisma.appAccess.upsert({
-    where: { userId_appId: { userId, appId } },
-    update: { granted, grantedBy: adminDiscordId },
-    create: { userId, appId, granted, grantedBy: adminDiscordId },
-  });
-
-  return Response.json({ ok: true });
+  const sessionUser = session?.user as Record<string, unknown> | undefined;
+  const actor = { discordId: String(sessionUser?.discordId ?? ""), username: (sessionUser?.username as string) ?? null };
+  try {
+    const result = await setGrants(actor, userId, [{ grantId: appId, granted }], "admin page", { allowPortalAdmin: true });
+    return Response.json({ ok: true, changeId: result.changeId });
+  } catch (err) {
+    const status = accessErrorStatus(err);
+    if (status === 500) console.error("[/api/admin PATCH] Error:", String(err));
+    return Response.json({ error: status === 500 ? "Internal error" : (err as Error).message }, { status });
+  }
 }
