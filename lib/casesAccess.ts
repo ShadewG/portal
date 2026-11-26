@@ -11,20 +11,8 @@ const allowedDiscordIds = new Set([
   "348547268695162890", // Ray / thfray
 ]);
 
-const allowedUsernames = new Set([
-  "shadew_",
-  "ed044426",
-  "chris_valentini",
-  "hareld",
-  "harald",
-  "ayoub_prods",
-  "arminnemeth",
-  "ray",
-  "thfray",
-]);
 
+// Discord id only: usernames are not identity (generic handles like "ray" could be claimed by anyone).
 export function isCasesDashboardAllowed(user: Record<string, unknown> | undefined) {
-  const discordId = String(user?.discordId ?? "");
-  const username = String(user?.username ?? "").toLowerCase();
-  return allowedDiscordIds.has(discordId) || allowedUsernames.has(username);
+  return allowedDiscordIds.has(String(user?.discordId ?? ""));
 }

@@ -47,6 +47,8 @@ globalThis.__check = {
       },
     },
     appAccess: {
+      // /api/me asks for the person's Desk row (lib/teamAccess.ts, 2 Nov 2026); no bot token here, so Discord is never asked
+      async findUnique({ where }) { guard(); return db.grants.find((g) => g.userId === where.userId_appId.userId && g.appId === where.userId_appId.appId) ?? null; },
       async findMany({ where }) {
         guard();
         return db.grants.filter((g) => g.userId === where.userId && (where.appId === undefined || g.appId === where.appId) && (where.granted === undefined || g.granted === where.granted));

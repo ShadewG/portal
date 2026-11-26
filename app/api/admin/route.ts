@@ -1,51 +1,13 @@
 import { NextRequest } from "next/server";
 import { auth } from "@/auth";
 import { prisma } from "@/lib/db";
+import { isPortalAdmin } from "@/lib/admin";
 import { allApps } from "@/lib/apps";
-
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-async function isAdmin(session: any) {
-  const user = (session?.user as Record<string, unknown> | undefined) ?? undefined;
-  const discordId = user?.discordId as string | undefined;
-  const email = user?.email as string | undefined;
-  const username = (user?.username as string | undefined) ?? (user?.name as string | undefined);
-
-  if (!discordId) {
-    console.error("[/api/admin] isAdmin: missing discordId on session user", user ?? null);
-  }
-  if (discordId && discordId === process.env.ADMIN_DISCORD_ID) {
-    console.error("[/api/admin] isAdmin: matched env admin", discordId);
-    return true;
-  }
-
-  const dbUser = await prisma.user.findFirst({
-    where: {
-      OR: [
-        ...(discordId ? [{ discordId }] : []),
-        ...(email ? [{ email }] : []),
-        ...(username ? [{ username }] : []),
-      ],
-    },
-  });
-
-  console.error("[/api/admin] isAdmin: db lookup", {
-    discordId: discordId ?? null,
-    email: email ?? null,
-    username: username ?? null,
-    dbDiscordId: dbUser?.discordId ?? null,
-    dbIsAdmin: dbUser?.isAdmin ?? null,
-  });
-
-  if (!dbUser) {
-    return false;
-  }
-  return dbUser.isAdmin ?? false;
-}
 
 /** GET /api/admin — list all users with their access */
 export async function GET() {
   const session = await auth();
-  if (!(await isAdmin(session))) {
+  if (!(await isPortalAdmin(session))) {
     return Response.json({ error: "Forbidden" }, { status: 403 });
   }
 
@@ -76,7 +38,7 @@ export async function GET() {
 /** PATCH /api/admin — toggle access: { userId, appId, granted } */
 export async function PATCH(req: NextRequest) {
   const session = await auth();
-  if (!(await isAdmin(session))) {
+  if (!(await isPortalAdmin(session))) {
     return Response.json({ error: "Forbidden" }, { status: 403 });
   }
 

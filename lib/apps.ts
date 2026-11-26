@@ -228,6 +228,23 @@ export const sections: AppSection[] = [
         color: "#f97316",
         status: "live",
       },
+      {
+        // Owner, 13 Nov 2026: Video Review is its own app, for everyone on the Insanity Discord server ("only giving
+        // everyone access to review for now ... keep perms as are"). Any signed-in Portal user may start it; Video Review
+        // itself checks the person is on the server (review_studio/backend/membership.py) and sends anyone Portal lets
+        // into FOIA Sorter on to the Sorter's own sign-in, so nobody gains Sorter or Desk access through this.
+        // Its pages live at foiasorter.insanity.team/review/ (review.insanity.team forwards there).
+        id: "video-review",
+        name: "Video Review",
+        description: "Watch cuts, leave timecoded notes and upload new versions. For everyone on the team's Discord server.",
+        url: "https://review.insanity.team/",
+        handoffPath: "/review/api/auth/portal",
+        allowAnyAuthenticatedUser: true,
+        allowedOrigins: ["https://review.insanity.team", "https://foiasorter.insanity.team"],
+        icon: "▶",
+        color: "#22c55e",
+        status: "live",
+      },
     ],
   },
   {
