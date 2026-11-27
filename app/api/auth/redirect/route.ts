@@ -3,7 +3,7 @@ import { auth } from "@/auth";
 import { prisma } from "@/lib/db";
 import { getAppById } from "@/lib/apps";
 import { signAppToken } from "@/lib/jwt";
-import { appAllowed, grantedIds, permittedAppIds } from "@/lib/access";
+import { grantedIds, handoffAllowed, permittedAppIds } from "@/lib/access";
 import { applyPendingGrants } from "@/lib/pendingAccess";
 import { portalOrigin } from "@/lib/portalOrigin";
 import { syncTeamDesk, type TeamCheck } from "@/lib/teamAccess";
@@ -112,8 +112,8 @@ export async function GET(req: NextRequest) {
   const team = appId === "desk" ? await syncTeamDesk({ id: dbUser.id, discordId }) : null;
 
   const isAdmin = dbUser.isAdmin || envAdmin;
-  // one rule for every route (lib/access.ts)
-  const hasAccess = appAllowed(app, { discordId, user, isAdmin, granted: await grantedIds(dbUser.id) });
+  // one rule for every route (lib/access.ts); a shell app (Pulse) also admits someone with only one of its tabs
+  const hasAccess = handoffAllowed(app, { discordId, user, isAdmin, granted: await grantedIds(dbUser.id) });
 
   if (!hasAccess && appId === "desk") return teamOnlyPage(portalOrigin(req), username, team);
   if (!hasAccess) {

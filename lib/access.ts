@@ -1,6 +1,6 @@
 import { prisma } from "@/lib/db";
 import { allApps, getAppById, type AppConfig } from "@/lib/apps";
-import { getGrant } from "@/lib/grants";
+import { getGrant, tabsOf } from "@/lib/grants";
 import { FRONTWIND_DUBBING_APP_ID, isFrontwindDubbingAllowed } from "@/lib/frontwindAccess";
 import { CASES_DASHBOARD_APP_ID, isCasesDashboardAllowed } from "@/lib/casesAccess";
 import { RENDER_FARM_APP_ID, isRenderFarmViewer } from "@/lib/renderfarmAccess";
@@ -57,7 +57,20 @@ export function grantAllowed(grantId: string, ctx: AccessContext): boolean {
     return app ? appAllowed(app, ctx) : false;
   }
   if (isOwner(ctx.discordId)) return true;
-  return ctx.granted.has(grant.id) && grantAllowed(grant.app, ctx);
+  if (!ctx.granted.has(grant.id)) return false;
+  // Parent rule: a tab counts only when its app is usable. A shell app (Pulse) is the exception: the tab row itself
+  // admits the person to the shell, and the app serves them only that tab (R-2159 M4, 27 Nov 2026).
+  return SHELL_APPS.has(grant.app) || grantAllowed(grant.app, ctx);
+}
+
+/** Apps whose page shell also admits a person who holds only one of its tabs. Pulse only: its site gate
+ *  (insanity-workspace pulse-access.mjs) then serves such a person the page shell and that tab, and 403 for the rest. */
+const SHELL_APPS: ReadonlySet<string> = new Set(["pulse"]);
+
+/** May /api/auth/redirect hand this person off to the app? The app rule, or for a shell app any granted tab row. */
+export function handoffAllowed(app: AppConfig, ctx: AccessContext): boolean {
+  if (appAllowed(app, ctx)) return true;
+  return SHELL_APPS.has(app.id) && tabsOf(app.id).some((t) => ctx.granted.has(t.id));
 }
 
 /** Granted AppAccess ids for one Portal user. */

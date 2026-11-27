@@ -102,7 +102,7 @@ const owner = process.env.ADMIN_DISCORD_ID;
 const users = await real.user.findMany({ orderBy: { createdAt: "asc" }, select: { id: true, discordId: true, username: true, avatar: true, email: true, isAdmin: true } });
 const redirectApps = [...allApps.map((a) => a.id), "video-review-guest"];
 const diffs = [];
-const counts = { users: users.length, meCompared: 0, permittedCompared: 0, redirectCompared: 0, checkCompared: 0 };
+const counts = { users: users.length, meCompared: 0, permittedCompared: 0, redirectCompared: 0, checkCompared: 0, tabCompared: 0 };
 const tabHolders = Object.fromEntries(grantCatalog.filter((g) => g.kind === "tab").map((g) => [g.id, []]));
 let unknownAllowed = 0;
 
@@ -129,9 +129,18 @@ for (const u of users) {
   const granted = await newAccess.grantedIds(u.id);
   for (const appId of redirectApps) {
     const ra = await oldRedirectAllowed(oldApps.getAppById(appId), appId, u.discordId, user, u, isAdmin);
-    const rb = newAccess.appAllowed(getAppById(appId), { discordId: u.discordId, user, isAdmin, granted });
+    const rb = newAccess.handoffAllowed(getAppById(appId), { discordId: u.discordId, user, isAdmin, granted });
     counts.redirectCompared++;
     if (Boolean(ra) !== Boolean(rb)) diffs.push(`${u.username} redirect ${appId}: ${ra} -> ${rb}`);
+  }
+
+  // M4 (27 Nov 2026): tab grants under the rule before the Pulse shell change (owner, or the tab row AND the parent
+  // app usable), copied verbatim, against the new grantAllowed.
+  const ctx = { discordId: u.discordId, user, isAdmin, granted };
+  for (const t of grantCatalog.filter((g) => g.kind === "tab")) {
+    const before = newAccess.isOwner(u.discordId) || (granted.has(t.id) && newAccess.grantAllowed(t.app, ctx));
+    counts.tabCompared++;
+    if (before !== newAccess.grantAllowed(t.id, ctx)) diffs.push(`${u.username} tab ${t.id}: ${before} -> ${!before}`);
   }
 
   for (const g of [...grantCatalog.map((g) => g.id), "nope.unknown", "pulse.hiring.extra", ""]) {
@@ -147,7 +156,7 @@ for (const u of users) {
 }
 
 console.log(`m2 mirror ${new Date().toISOString()}  old=${path.basename(oldRoot)}`);
-console.log(`users ${counts.users}; /api/me maps compared ${counts.meCompared} (x ${allApps.length} apps); permittedAppIds ${counts.permittedCompared}; redirect decisions ${counts.redirectCompared}; check-vs-me app answers ${counts.checkCompared}`);
+console.log(`users ${counts.users}; /api/me maps compared ${counts.meCompared} (x ${allApps.length} apps); permittedAppIds ${counts.permittedCompared}; redirect decisions ${counts.redirectCompared}; check-vs-me app answers ${counts.checkCompared}; tab rule old-vs-new ${counts.tabCompared}`);
 console.log(`writes attempted by the routes (blocked): ${writes.length}${writes.length ? " " + [...new Set(writes)].join(",") : ""}`);
 console.log(`unknown grants allowed: ${unknownAllowed}`);
 for (const [g, who] of Object.entries(tabHolders)) console.log(`tab ${g}: ${who.length} allowed (${who.join(", ") || "nobody"})`);

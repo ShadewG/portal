@@ -6,6 +6,7 @@ import { allApps } from "@/lib/apps";
  * - An app grant is the app id from lib/apps.ts (stored in AppAccess.appId exactly as today).
  * - A tab grant is "<app id>.<tab>", e.g. "pulse.hiring", stored in the same AppAccess table.
  *   Parent rule (lib/access.ts grantAllowed): a tab grant only counts when its app is usable. The owner has every tab.
+ *   Exception (M4, 27 Nov 2026): Pulse is a shell app, its tab row alone admits the shell (lib/access.ts SHELL_APPS).
  * - Ids not in this catalog are unknown: the check endpoint answers false and setGrants refuses them.
  *
  * `enforced` says whether the app itself already asks Portal for this grant. Tabs start false: their apps still use
