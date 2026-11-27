@@ -31,6 +31,7 @@ globalThis.__t = { prisma };
 const C = await import(pathToFileURL(path.join(root, "lib/accessChanges.ts")).href);
 const A = await import(pathToFileURL(path.join(root, "lib/access.ts")).href);
 const P = await import(pathToFileURL(path.join(root, "lib/pendingAccess.ts")).href);
+const G = await import(pathToFileURL(path.join(root, "lib/apps.ts")).href);
 
 const results = [];
 const check = (name, ok, detail = "") => { results.push({ name, ok: Boolean(ok) }); console.log(`${ok ? "PASS" : "FAIL"} ${name}${detail ? "  " + detail : ""}`); };
@@ -63,7 +64,13 @@ check("missing user refused", (await code(C.setGrants(O, "no-such-user", [{ gran
 
 // tab + parent rule
 const c1 = await C.setGrants(O, amino.id, [{ grantId: "pulse.hiring", granted: true }], "m2 test: tab only");
-check("tab only: pulse.hiring not usable without pulse", !A.grantAllowed("pulse.hiring", await ctxOf(amino)), `change ${c1.changeId}`);
+check("tab only: pulse.hiring usable without pulse (gate rule tab, M4)", A.grantAllowed("pulse.hiring", await ctxOf(amino)) && !A.grantAllowed("pulse", await ctxOf(amino)), `change ${c1.changeId}`);
+check("tab only: pulse.hiring row admits the Pulse handoff (M4)", A.handoffAllowed(G.getAppById("pulse"), await ctxOf(amino)));
+// M4: only tabs with a gate rule (SHELL_TABS) count without the app; pulse.servers / pulse.takedowns rows alone do not
+for (const t of ["pulse.servers", "pulse.takedowns"]) {
+  const ctxT = { discordId: "900000000000000099", user: { discordId: "900000000000000099" }, isAdmin: false, granted: new Set([t]) };
+  check(`tab only: ${t} not usable and no Pulse handoff without pulse`, !A.grantAllowed(t, ctxT) && !A.handoffAllowed(G.getAppById("pulse"), ctxT));
+}
 const c2 = await C.setGrants(O, amino.id, [{ grantId: "pulse", granted: true }], "m2 test: add app");
 check("tab + app: pulse.hiring usable", A.grantAllowed("pulse.hiring", await ctxOf(amino)) && A.grantAllowed("pulse", await ctxOf(amino)));
 check("tab + app: pulse.servers still not usable", !A.grantAllowed("pulse.servers", await ctxOf(amino)));

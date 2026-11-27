@@ -58,19 +58,20 @@ export function grantAllowed(grantId: string, ctx: AccessContext): boolean {
   }
   if (isOwner(ctx.discordId)) return true;
   if (!ctx.granted.has(grant.id)) return false;
-  // Parent rule: a tab counts only when its app is usable. A shell app (Pulse) is the exception: the tab row itself
-  // admits the person to the shell, and the app serves them only that tab (R-2159 M4, 27 Nov 2026).
-  return SHELL_APPS.has(grant.app) || grantAllowed(grant.app, ctx);
+  // Parent rule: a tab counts only when its app is usable. Exception: a tab in SHELL_TABS (its app's site gate has a
+  // rule for it) counts on its own row, and the app serves that person only that tab (R-2159 M4, 27 Nov 2026).
+  return SHELL_TABS.has(grant.id) || grantAllowed(grant.app, ctx);
 }
 
-/** Apps whose page shell also admits a person who holds only one of its tabs. Pulse only: its site gate
- *  (insanity-workspace pulse-access.mjs) then serves such a person the page shell and that tab, and 403 for the rest. */
-const SHELL_APPS: ReadonlySet<string> = new Set(["pulse"]);
+/** Tabs that admit a person to their app's page shell without the app grant. Only tabs whose app gate has a rule for
+ *  them: pulse.hiring (insanity-workspace pulse-access.mjs serves the shell + /hiring/*, 403 for the rest).
+ *  Add a tab here only together with its gate rule; every other tab keeps the parent rule. */
+const SHELL_TABS: ReadonlySet<string> = new Set(["pulse.hiring"]);
 
-/** May /api/auth/redirect hand this person off to the app? The app rule, or for a shell app any granted tab row. */
+/** May /api/auth/redirect hand this person off to the app? The app rule, or a granted SHELL_TABS row of this app. */
 export function handoffAllowed(app: AppConfig, ctx: AccessContext): boolean {
   if (appAllowed(app, ctx)) return true;
-  return SHELL_APPS.has(app.id) && tabsOf(app.id).some((t) => ctx.granted.has(t.id));
+  return tabsOf(app.id).some((t) => SHELL_TABS.has(t.id) && ctx.granted.has(t.id));
 }
 
 /** Granted AppAccess ids for one Portal user. */
