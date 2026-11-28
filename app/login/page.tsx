@@ -34,6 +34,30 @@ function forDesktopApprove(callbackUrl: string) {
   }
 }
 
+// Sign-in text per app (X7, R-3258, 28 Nov 2026; Video Review text from plan-vr E7 S10, Training text from plan-training
+// fix 17). The callback is Portal's hand-off /api/auth/redirect?app=<id>&next=<path>: only the app id (and, for the
+// Sorter, whether next is a /review page) picks a fixed line from this table. Nothing from the address is shown.
+// Any other callback keeps the default card.
+type SignInText = { title: string; line: string };
+const VIDEO_REVIEW: SignInText = { title: "Video Review", line: "Sign in with Discord to watch the video you were sent." };
+const SIGNIN_TEXT: Record<string, SignInText> = {
+  "video-review": VIDEO_REVIEW,
+  "video-review-guest": VIDEO_REVIEW,
+  "insanity-courses": { title: "Insanity Training", line: "Sign in with Discord to open your courses." }, // learn + /guides
+};
+function signInText(callbackUrl: string): SignInText | null {
+  if (!callbackUrl.startsWith("/") || callbackUrl.startsWith("//")) return null; // Portal's own relative hand-off only
+  try {
+    const u = new URL(callbackUrl, "https://portal.insanity.team");
+    if (u.pathname !== "/api/auth/redirect") return null;
+    const app = u.searchParams.get("app") || "";
+    if (app === "foia-sorter" && (u.searchParams.get("next") || "").startsWith("/review")) return VIDEO_REVIEW;
+    return Object.prototype.hasOwnProperty.call(SIGNIN_TEXT, app) ? SIGNIN_TEXT[app] : null;
+  } catch {
+    return null;
+  }
+}
+
 type Flow = { state: "idle" } | { state: "starting" } | { state: "waiting"; code: string; url: string } | { state: "done"; who: string | null };
 
 function BrowserSignIn({ callbackUrl, onHere }: { callbackUrl: string; onHere: () => void }) {
@@ -107,6 +131,7 @@ function BrowserSignIn({ callbackUrl, onHere }: { callbackUrl: string; onHere: (
 function LoginCard({ callbackUrl }: { callbackUrl: string }) {
   const approve = forDesktopApprove(callbackUrl);
   const desk = forDesk(callbackUrl) || approve;
+  const text = desk ? null : signInText(callbackUrl);
   const [viaBrowser, setViaBrowser] = useState(false);
   useEffect(() => { if (!approve) setViaBrowser(deskAppCanUseBrowser()); }, [approve]);
   return (
@@ -131,7 +156,7 @@ function LoginCard({ callbackUrl }: { callbackUrl: string }) {
           marginBottom: 8,
         }}
       >
-        {desk ? "Insanity Desk" : "Command Center"}
+        {desk ? "Insanity Desk" : text ? text.title : "Command Center"}
       </h1>
       <p
         style={{
@@ -141,7 +166,7 @@ function LoginCard({ callbackUrl }: { callbackUrl: string }) {
           letterSpacing: "0.05em",
         }}
       >
-        {approve ? "Sign in with your Discord account to finish signing in the Insanity Desk app." : desk ? "For everyone on the Insanity team: sign in with the Discord account you use on the team's server." : "Authenticate to continue"}
+        {approve ? "Sign in with your Discord account to finish signing in the Insanity Desk app." : desk ? "For everyone on the Insanity team: sign in with the Discord account you use on the team's server." : text ? text.line : "Authenticate to continue"}
       </p>
       {viaBrowser ? <BrowserSignIn callbackUrl={callbackUrl} onHere={() => signIn("discord", { callbackUrl })} /> : (
       <button

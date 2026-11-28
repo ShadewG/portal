@@ -72,7 +72,7 @@ try {
   // ---- every wall a plain member meets shows the page ----
   check("member has no Pulse (test setup)", !(await rowOn(WISE, "pulse")));
   const ref = await call(W, "GET", "/api/auth/redirect?app=pulse");
-  check("member: Portal hand-off refusal = 403 that opens /no-access?want=pulse", ref.status === 403 && /http-equiv="refresh" content="0;url=http:\/\/127\.0\.0\.1:3906\/no-access\?want=pulse"/.test(ref.text) && ref.text.includes("Ask for access"));
+  check("member: Portal hand-off refusal = 403 that opens /no-access?want=pulse", ref.status === 403 && ref.text.includes(`http-equiv="refresh" content="0;url=${B}/no-access?want=pulse"`) && ref.text.includes("Ask for access"));
   const acc = await call(W, "GET", "/access");
   check("member: /access sends to /no-access?want=portal.access-admin", [307, 308].includes(acc.status) && acc.location.endsWith("/no-access?want=portal.access-admin"));
   const np = await html(W, "/no-access?want=pulse");
