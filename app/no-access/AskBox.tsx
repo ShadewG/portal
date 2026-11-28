@@ -37,7 +37,7 @@ export default function AskBox({ view }: { view: NoAccessView }) {
     return (
       <>
         <h1>You have {view.full}</h1>
-        <div className="pl-row" style={{ marginTop: 20 }}><a className="pl-btn pl-btn-main" href={view.openHref}>Open {view.name}</a></div>
+        <div className="pl-row" style={{ marginTop: 20 }}><a className="pl-btn pl-btn-main" href={view.openHref} target="_top">Open {view.name}</a></div>
       </>
     );
   }
@@ -48,7 +48,7 @@ export default function AskBox({ view }: { view: NoAccessView }) {
         <p className="pl-dim">{view.line}</p>
         <p className="pl-note pl-ok" role="status">Asked on {day(asked)}. {view.deciders} will answer.</p>
         <p className="pl-small">You will see the answer here and on Home.</p>
-        <div className="pl-row" style={{ marginTop: 12 }}><a className="pl-btn" href="/">Back to Home</a></div>
+        <div className="pl-row" style={{ marginTop: 12 }}><a className="pl-btn" href="/" target="_top">Back to Home</a></div>
       </>
     );
   }
@@ -67,7 +67,7 @@ export default function AskBox({ view }: { view: NoAccessView }) {
       {error && <p className="pl-note pl-err" role="alert" style={{ marginTop: 12 }}>{error}</p>}
       <div className="pl-row" style={{ marginTop: 16 }}>
         <button className="pl-btn pl-btn-main" onClick={ask} disabled={busy}>{busy ? "Asking..." : last?.state === "declined" ? "Ask again" : "Ask for access"}</button>
-        <a className="pl-link" href="/">Back to Home</a>
+        <a className="pl-link" href="/" target="_top">Back to Home</a>
       </div>
     </>
   );
