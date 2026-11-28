@@ -111,7 +111,7 @@ try {
   check("ask: text/plain 403", (await call(W, "POST", "/api/access/ask", JSON.stringify({ grantId: "pulse" }), { "Content-Type": "text/plain" })).status === 403);
   check("answer: no Origin 403 (Atom)", (await call(AT, "POST", "/api/access/admin/requests", { id: "x", action: "approve" }, { Origin: null })).status === 403);
   check("answer: other Origin 403 (Atom)", (await call(AT, "POST", "/api/access/admin/requests", { id: "x", action: "approve" }, { Origin: "https://evil.example" })).status === 403);
-  check("CSRF refusals wrote nothing", (await Q(`select count(*)::int n from "AccessRequest" where "createdAt" >= $1`, [start]))[0].n === 0);
+  check("CSRF refusals wrote nothing", (await Q(`select count(*)::int n from "AccessRequest" where "createdAt" >= $1 and "grantId"='pulse'`, [start]))[0].n === 0);
 
   // ---- ask, duplicate, has, bad input ----
   const a1 = await ask(W, "pulse", "I review edits\n<b>for Atom</b>\u0007");

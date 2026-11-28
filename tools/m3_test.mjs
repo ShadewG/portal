@@ -62,8 +62,11 @@ try {
   check("Portal admin: state 200, read only", ho.status === 200 && ho.json.viewer.can === "read");
   check("normal user: state 404", (await call(T, "GET", "/api/access/admin")).status === 404);
   check("signed out: state 404", (await call(null, "GET", "/api/access/admin")).status === 404);
-  check("page /access: owner 200, Portal admin 200, normal user 404",
-    (await call(S, "GET", "/access")).status === 200 && (await call(H, "GET", "/access")).status === 200 && (await call(T, "GET", "/access")).status === 404);
+  // X6: a normal user is sent to the one no-access page (was a bare 404); the API routes stay 404
+  const tRes = await fetch(B + "/access", { headers: { Cookie: T }, redirect: "manual" });
+  const tPage = { status: tRes.status, location: tRes.headers.get("location") ?? "" };
+  check("page /access: owner 200, Portal admin 200, normal user -> no-access page",
+    (await call(S, "GET", "/access")).status === 200 && (await call(H, "GET", "/access")).status === 200 && tPage.status === 307 && tPage.location.includes("/no-access?want=portal.access-admin"));
   const reads = ["/api/access/admin/audit", "/api/access/admin/pending", "/api/access/admin/presets"];
   check("normal user: every read route 404", (await Promise.all(reads.map((u) => call(T, "GET", u)))).every((r) => r.status === 404));
   check("Portal admin: read routes 200", (await Promise.all(reads.map((u) => call(H, "GET", u)))).every((r) => r.status === 200));
