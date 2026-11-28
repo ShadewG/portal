@@ -2,6 +2,7 @@
 
 import { createElement, useCallback, useEffect, useState, type CSSProperties } from "react";
 import PremiereQueue from "./PremiereQueue";
+import { collapseActivity, failedReason, farmCounts, fmtRange, fmtWhen, parseFarmTime, reasonText, splitReason, topLine, type PremiereJobLite } from "@/lib/renderfarmView";
 
 const REFRESH_MS = 5000;
 
@@ -35,11 +36,16 @@ type Live = {
   host: Host;
   /** Added by Portal: whether this person gets the farm controls (admins + Render Farm grant). */
   viewer?: { canControl: boolean };
+  /** IANA zone of the PC's zone-less history times, if it ever sends one (default Europe/Oslo). */
+  timeZone?: string;
   error?: string;
 };
 
 /** Shown to people who can see the farm but not control it. */
 const ASK_FOR_CONTROLS = "To start, pause or re-queue renders, ask Samuel or Austin.";
+/** Shown instead of the raw network error (it named the PC's address and port). */
+const FARM_DOWN = "The render PC is not answering. Premiere renders below still work.";
+const OFFLINE = "This page cannot reach the server. Check your internet connection.";
 
 const STAGES: Record<string, string> = {
   starting: "Starting",
@@ -54,17 +60,12 @@ const STAGES: Record<string, string> = {
   upload: "Uploading to Dropbox",
 };
 
-/** Failure text from the farm log, minus the card prefix and the trailing episode tag. */
-function reasonText(detail: string): string {
-  return detail.replace(/^\[[^\]]*\]\s+'[^']*'\s*/, "").replace(/\s+episode=\S+\s*$/, "");
-}
-
 /** Dropbox path of a delivered render, from a DONE line ("… -> /Insanity/…/file.mp4 episode=…"). */
 function deliveredPath(detail: string): string | null {
   const m = String(detail || "").match(/-> (\/Insanity\/.+?\.(?:mp4|mov))(?=\s|$)/i);
   return m ? m[1] : null;
 }
-type Render = { path: string; name: string; episode: string; kind: string; timestamp: string; alpha: boolean; by?: string | null };
+type Render = { path: string; name: string; episode: string; kind: string; timestamp: string; alpha: boolean; by?: string | null; zone?: string };
 const fileName = (p: string) => p.split("/").pop() || p;
 
 /**
@@ -73,14 +74,14 @@ const fileName = (p: string) => p.split("/").pop() || p;
  * and name nobody, so this is often unknown (shown as nothing, never guessed).
  */
 function askedBy(done: HistoryRow, history: HistoryRow[]): string | null {
-  const at = Date.parse(done.timestamp);
+  const at = parseFarmTime(done.timestamp);
   const note = history.find(
-    (h) => h.type === "DONE-WITH-NOTES" && h.name === done.name && h.kind === done.kind && Math.abs(Date.parse(h.timestamp) - at) <= 60_000,
+    (h) => h.type === "DONE-WITH-NOTES" && h.name === done.name && h.kind === done.kind && Math.abs(parseFarmTime(h.timestamp) - at) <= 60_000,
   );
   const m = note ? note.detail.match(/\bas ([^,.;:|'"\n]{1,60}?) asked on the card/) : null;
   return m ? m[1].replace(/^AE editor\s+/i, "").trim() || null : null;
 }
-const meta = (r: Render) => `${r.episode} · ${r.kind} · ${fmtDay(r.timestamp)}${r.by ? ` · asked by ${r.by}` : ""}`;
+const meta = (r: Render) => `${r.episode} · ${r.kind} · ${when(r.timestamp, r.zone)}${r.by ? ` · asked by ${r.by}` : ""}`;
 
 /**
  * Output video of a finished render (DONE or DONE-WITH-NOTES line), for the Review / Share link
@@ -110,16 +111,8 @@ function upDays(bootedAt: string | undefined, now: number): number | null {
   return days >= 0 ? days : null;
 }
 
-function fmtTime(ts: string): string {
-  const d = new Date(ts);
-  return Number.isNaN(d.getTime()) ? ts : d.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
-}
-function fmtDay(ts: string): string {
-  const d = new Date(ts);
-  if (Number.isNaN(d.getTime())) return "";
-  const today = new Date().toDateString() === d.toDateString();
-  return today ? fmtTime(ts) : `${d.toLocaleDateString([], { month: "short", day: "numeric" })} ${fmtTime(ts)}`;
-}
+/** One clock (B8): every time on the page in the viewer's zone, "18:40" today, else "27 Nov, 18:40". */
+const when = (ts: string, zone?: string) => fmtWhen(parseFarmTime(ts, zone));
 
 const card: CSSProperties = { background: "var(--bg-surface)", border: "1px solid var(--border)", padding: 16 };
 const label: CSSProperties = { fontSize: 10, fontWeight: 700, letterSpacing: "0.12em", textTransform: "uppercase", color: "var(--text-muted)", margin: "0 0 10px" };
@@ -152,6 +145,31 @@ function ReviewLinks({ path, small = false }: { path: string; small?: boolean })
   );
 }
 
+/** A farm failure in plain words; the raw farm text (paths, codes) only inside "Technical details". */
+function Reason({ text, cardUrl }: { text: string; cardUrl?: string }) {
+  const { plain, details } = splitReason(text);
+  const style: CSSProperties = { color: "var(--text-dim)", fontSize: 11, wordBreak: "break-word" };
+  if (!plain) {
+    return (
+      <div style={style}>
+        No reason recorded, ask the farm owner.
+        {cardUrl && <> <a href={cardUrl} target="_blank" rel="noreferrer" style={{ color: "var(--text)" }}>Open the card</a></>}
+      </div>
+    );
+  }
+  return (
+    <div style={style}>
+      {plain}
+      {details && (
+        <details>
+          <summary style={{ cursor: "pointer", color: "var(--text-muted)" }}>Technical details</summary>
+          {details}
+        </details>
+      )}
+    </div>
+  );
+}
+
 function stateTone(state: string): string {
   if (state === "Running") return "var(--green)";
   if (state === "Maintenance" || state === "Stopped") return "var(--red)";
@@ -168,22 +186,24 @@ export default function RenderFarmPage() {
   const [lastOk, setLastOk] = useState<number | null>(null);
   const [now, setNow] = useState(() => Date.now());
   const [playing, setPlaying] = useState<Render | null>(null);
+  const [pjobs, setPjobs] = useState<PremiereJobLite[] | null>(null);
   const closePlayer = useCallback(() => setPlaying(null), []);
 
   const load = useCallback(async () => {
     try {
       const res = await fetch("/api/renderfarm/live", { cache: "no-store" });
       if (res.status === 403) return setForbidden(true);
-      const body = (await res.json()) as Live;
+      const body = (await res.json().catch(() => ({}))) as Live;
       if (!res.ok) {
-        setError(body.error || `HTTP ${res.status}`);
+        console.warn("render farm:", res.status, body.error);
+        setError(FARM_DOWN);
         return;
       }
       setData(body);
       setError(null);
       setLastOk(Date.now());
     } catch {
-      setError("Could not reach the portal");
+      setError(OFFLINE);
     }
   }, []);
 
@@ -222,12 +242,14 @@ export default function RenderFarmPage() {
   // Farm controls: admins + Render Farm grant (enforced by the API too). Everyone else sees the page only.
   const canControl = data?.viewer?.canControl === true;
   const history = data?.history ?? [];
+  const zone = data?.timeZone;
   // Newest first, one tile per delivered file (a card rendered twice lands as _v2, a new path).
   const renders: Render[] = [];
   for (const h of history) {
     const p = h.type === "DONE" ? deliveredPath(h.detail) : null;
-    if (p && !renders.some((r) => r.path === p)) renders.push({ path: p, name: h.name, episode: h.episode, kind: h.kind, timestamp: h.timestamp, alpha: /\.mov$/i.test(p), by: askedBy(h, history) });
+    if (p && !renders.some((r) => r.path === p)) renders.push({ path: p, name: h.name, episode: h.episode, kind: h.kind, timestamp: h.timestamp, alpha: /\.mov$/i.test(p), by: askedBy(h, history), zone });
   }
+  const counts = data && pjobs ? farmCounts({ queue: data.queue.rows, failed: data.failed }, pjobs) : null;
 
   function ControlButton({ action, text, tone = "normal", guarded = false }: { action: string; text: string; tone?: "normal" | "danger" | "primary"; guarded?: boolean }) {
     const disabled = !!busy || !data?.controls.canControl;
@@ -255,23 +277,40 @@ export default function RenderFarmPage() {
         <h1 style={{ fontSize: 12, fontWeight: 700, letterSpacing: "0.15em", textTransform: "uppercase", margin: 0 }}>Render Farm</h1>
         {data && (
           <span style={{ marginLeft: "auto", fontSize: 11, color: stale || error ? "var(--red)" : "var(--text-muted)" }}>
-            {error ? `▲ ${error}` : stale ? `▲ No update for ${fmtDuration(Math.round((now - (lastOk ?? now)) / 1000))}` : `Live · updated ${fmtTime(data.generatedAt)}`}
+            {error ? `▲ ${error === FARM_DOWN ? "The render PC is not answering" : error}` : stale ? `▲ No update for ${fmtDuration(Math.round((now - (lastOk ?? now)) / 1000))}` : `Updated ${when(data.generatedAt)}`}
           </span>
         )}
       </header>
 
       <main style={{ maxWidth: 1180, margin: "0 auto", padding: "24px 16px 48px", display: "grid", gap: 16 }}>
-        {forbidden && <p style={{ color: "var(--text-dim)" }}>You do not have access to the Render Farm. Ask Samuel for access in Portal.</p>}
+        {forbidden && (
+          <section style={{ ...card, display: "grid", gap: 8, maxWidth: 560 }}>
+            <p style={{ margin: 0, fontSize: 15, fontWeight: 600 }}>You do not have access to Render Farm yet.</p>
+            <p style={{ margin: 0, fontSize: 13, color: "var(--text-dim)" }}>Render Farm shows the team&apos;s After Effects and Premiere renders. Ask Samuel or Austin for access to Render Farm.</p>
+            <a href="/" style={{ ...btn(), textDecoration: "none", justifySelf: "start" }}>Go home</a>
+          </section>
+        )}
         {!forbidden && !data && !error && <p style={{ color: "var(--text-dim)" }}>Connecting to the render farm…</p>}
-        {!forbidden && !data && error && <p style={{ color: "var(--red)" }}>{error}</p>}
+        {!forbidden && !data && error && (
+          <section style={{ ...card, display: "flex", flexWrap: "wrap", gap: 12, alignItems: "center" }}>
+            <p style={{ margin: 0, fontSize: 14 }}>{error}</p>
+            <button style={btn()} onClick={() => void load()}>Try again</button>
+          </section>
+        )}
         {/* The Premiere queue lives on this server: show it even when the After Effects farm can't be reached. */}
-        {!forbidden && !data && error && <PremiereQueue />}
+        {!forbidden && !data && error && <PremiereQueue onJobs={setPjobs} />}
         {playing && <Player r={playing} onClose={closePlayer} />}
 
         {data && (
           <>
             {/* Status + controls */}
             <section style={{ ...card, display: "flex", flexWrap: "wrap", gap: 20, alignItems: "center" }}>
+              {/* One honest line for everyone (S11): counts from both queues. */}
+              <p style={{ width: "100%", margin: 0, fontSize: 15, fontWeight: 600 }}>
+                {counts ? topLine(counts) : "Counting renders…"}
+                {!canControl && state !== "Running" && <span style={{ color: stateTone(state) }}> · farm: {state}</span>}
+              </p>
+              {canControl && (
               <div style={{ minWidth: 180 }}>
                 <p style={label}>Farm</p>
                 <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
@@ -283,6 +322,7 @@ export default function RenderFarmPage() {
                   {(data.heartbeatAgeSeconds ?? 0) > 120 && state === "Running" && <span style={{ color: "var(--red)" }}> — poller may be stuck</span>}
                 </div>
               </div>
+              )}
               {canControl ? (
                 <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginLeft: "auto" }}>
                   {state === "Maintenance" ? (
@@ -303,7 +343,7 @@ export default function RenderFarmPage() {
                   )}
                 </div>
               ) : (
-                <p style={{ margin: "0 0 0 auto", fontSize: 11, color: "var(--text-muted)" }}>{ASK_FOR_CONTROLS}</p>
+                <p style={{ margin: 0, fontSize: 11, color: "var(--text-muted)" }}>{ASK_FOR_CONTROLS}</p>
               )}
               {canControl && !data.controls.canControl && (
                 <p style={{ width: "100%", margin: 0, fontSize: 11, color: "var(--amber)" }}>Controls are disabled: this machine is not the primary render node.</p>
@@ -315,7 +355,7 @@ export default function RenderFarmPage() {
             <section style={card}>
               <p style={label}>Now rendering</p>
               {!cur ? (
-                <p style={{ margin: 0, color: "var(--text-dim)", fontSize: 13 }}>Idle{data.queue.rows.length ? ` — ${data.queue.rows.length} card(s) waiting` : " — queue is empty"}</p>
+                <p style={{ margin: 0, color: "var(--text-dim)", fontSize: 13 }}>Nothing is rendering right now.{data.queue.rows.length ? ` ${data.queue.rows.length} After Effects card${data.queue.rows.length === 1 ? "" : "s"} waiting.` : ""}</p>
               ) : (
                 <div style={{ display: "grid", gap: 10 }}>
                   <div style={{ display: "flex", gap: 12, flexWrap: "wrap", alignItems: "baseline" }}>
@@ -346,7 +386,7 @@ export default function RenderFarmPage() {
             </section>
 
             {/* Premiere renders (premiere-farm service on this server) */}
-            <PremiereQueue />
+            <PremiereQueue onJobs={setPjobs} />
 
             {/* Recent renders: thumbnails, click to play */}
             {renders.length > 0 && (
@@ -377,7 +417,7 @@ export default function RenderFarmPage() {
                 {data.queue.errors.map((e) => (
                   <p key={e.episode + e.error} style={{ fontSize: 11, color: "var(--amber)", margin: "8px 0 0" }}>Could not read {e.episode || "a database"}: {e.error}</p>
                 ))}
-                {data.queue.checkedAt && <p style={{ fontSize: 10, color: "var(--text-muted)", margin: "10px 0 0" }}>Notion checked {fmtTime(data.queue.checkedAt)}</p>}
+                {data.queue.checkedAt && <p style={{ fontSize: 10, color: "var(--text-muted)", margin: "10px 0 0" }}>Notion checked {when(data.queue.checkedAt)}</p>}
               </section>
 
               {/* Failed */}
@@ -398,7 +438,9 @@ export default function RenderFarmPage() {
                             </button>
                           )}
                         </div>
-                        {c.reason && <div style={{ color: "var(--text-dim)", fontSize: 11, paddingLeft: 52, wordBreak: "break-word" }}>{reasonText(c.reason)}</div>}
+                        <div style={{ paddingLeft: 52 }}>
+                          <Reason text={failedReason(c, history)} cardUrl={c.notionUrl} />
+                        </div>
                       </li>
                     );
                   })}
@@ -411,13 +453,28 @@ export default function RenderFarmPage() {
               <section style={card}>
                 <p style={label}>Recent activity</p>
                 <ul style={{ listStyle: "none", margin: 0, padding: 0, display: "grid", gap: 6, maxHeight: 420, overflowY: "auto" }}>
-                  {data.history.slice(0, 30).map((h, i) => {
+                  {collapseActivity(history).slice(0, 30).map((item, i) => {
+                    if ("repeat" in item) {
+                      const r = item.repeat;
+                      return (
+                        <li key={i} style={{ fontSize: 12, display: "grid", gridTemplateColumns: "96px 1fr", gap: 8 }}>
+                          <span style={{ color: "var(--text-muted)" }}>{when(r.to, zone)}</span>
+                          <span>
+                            <span style={{ color: "var(--red)", fontWeight: 600 }}>
+                              <span style={{ wordBreak: "break-all" }}>{r.name}</span> failed {r.fails} times, {fmtRange(parseFarmTime(r.from, zone), parseFarmTime(r.to, zone))}
+                            </span>
+                            {reasonText(r.last.detail) && <Reason text={r.last.detail} />}
+                          </span>
+                        </li>
+                      );
+                    }
+                    const h = item.row;
                     const playable = h.type === "DONE" ? deliveredPath(h.detail) : null;
                     const output = reviewablePath(h.type, h.detail);
                     const by = h.type === "DONE" ? askedBy(h, history) : null;
                     return (
-                    <li key={i} style={{ fontSize: 12, display: "grid", gridTemplateColumns: "64px 1fr", gap: 8 }}>
-                      <span style={{ color: "var(--text-muted)" }}>{fmtDay(h.timestamp)}</span>
+                    <li key={i} style={{ fontSize: 12, display: "grid", gridTemplateColumns: "96px 1fr", gap: 8 }}>
+                      <span style={{ color: "var(--text-muted)" }}>{when(h.timestamp, zone)}</span>
                       <span>
                         <span style={{ color: h.type === "FAIL" ? "var(--red)" : h.type === "DONE" ? "var(--green)" : "var(--text-dim)", fontWeight: 600 }}>{h.label}</span>{" "}
                         <span style={{ wordBreak: "break-all" }}>{h.name}</span>
@@ -427,7 +484,7 @@ export default function RenderFarmPage() {
                             {playable && (
                               <button
                                 style={{ ...btn(), padding: "1px 6px", fontSize: 10 }}
-                                onClick={() => setPlaying(renders.find((r) => r.path === playable) ?? { path: playable, name: h.name, episode: h.episode, kind: h.kind, timestamp: h.timestamp, alpha: /\.mov$/i.test(playable), by })}
+                                onClick={() => setPlaying(renders.find((r) => r.path === playable) ?? { path: playable, name: h.name, episode: h.episode, kind: h.kind, timestamp: h.timestamp, alpha: /\.mov$/i.test(playable), by, zone })}
                               >
                                 ▶ Play
                               </button>
@@ -435,9 +492,7 @@ export default function RenderFarmPage() {
                             {output && <ReviewLinks path={output} small />}
                           </span>
                         )}
-                        {h.type === "FAIL" && (
-                          <div style={{ color: "var(--text-dim)", fontSize: 11, wordBreak: "break-word" }}>{reasonText(h.detail)}</div>
-                        )}
+                        {h.type === "FAIL" && <Reason text={h.detail} />}
                       </span>
                     </li>
                     );
