@@ -13,6 +13,10 @@ import { useState, useEffect, useCallback } from "react";
 
 type AccessMap = Record<string, boolean>;
 
+// An app whose Portal hand-off is not switched on yet (signInOff, e.g. KPI until its gate is live) gets no tile, so
+// nobody opens a "not switched on yet" page (review N4). Deleting signInOff in lib/apps.ts shows the tile again.
+const shownSections: AppSection[] = sections.map((s) => ({ ...s, apps: s.apps.filter((a) => !a.signInOff) }));
+
 function StatusDot({ status }: { status: AppConfig["status"] }) {
   return <span className={`status-dot status-${status}`} title={status} />;
 }
@@ -227,7 +231,7 @@ export default function Dashboard() {
     if (session?.user) loadAccess();
   }, [session, loadAccess]);
 
-  const accessibleCount = Object.values(access).filter(Boolean).length;
+  const accessibleCount = shownSections.reduce((n, s) => n + s.apps.filter((a) => access[a.id]).length, 0);
   let idx = 0;
 
   return (
@@ -432,7 +436,7 @@ export default function Dashboard() {
         </div>
 
         {/* Sections */}
-        {sections.map((section) => {
+        {shownSections.map((section) => {
           const start = idx;
           idx += section.apps.length;
           return (
