@@ -2,6 +2,7 @@ import { redirect } from "next/navigation";
 import { auth } from "@/auth";
 import { viewerOf } from "@/lib/accessAdmin";
 import AccessDashboard from "./AccessDashboard";
+import FeedbackButton from "../FeedbackButton";
 import "./access.css";
 
 export const dynamic = "force-dynamic";
@@ -13,5 +14,10 @@ export const metadata = { title: "Access · Home" };
 export default async function AccessPage() {
   const viewer = await viewerOf(await auth());
   if (!viewer) redirect("/no-access?want=portal.access-admin");
-  return <AccessDashboard can={viewer.can} isOwner={viewer.isOwner} />;
+  return (
+    <>
+      <AccessDashboard can={viewer.can} isOwner={viewer.isOwner} />
+      <FeedbackButton page="/access" />
+    </>
+  );
 }

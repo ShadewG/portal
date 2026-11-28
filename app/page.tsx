@@ -4,6 +4,7 @@ import { useSession, signOut } from "next-auth/react";
 import { useCallback, useEffect, useState } from "react";
 import { sections, type AppConfig } from "@/lib/apps";
 import { plainOf } from "@/lib/plainNames";
+import FeedbackButton from "./FeedbackButton";
 import "./plain.css";
 
 /**
@@ -159,6 +160,8 @@ export default function Home() {
           </>
         )}
       </main>
+      {/* X6 S5: "This is confusing" note, signed-in people only */}
+      {session?.user && <FeedbackButton page="/" />}
     </div>
   );
 }

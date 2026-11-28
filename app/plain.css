@@ -34,7 +34,7 @@
 .pl-top { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px 16px; padding: 10px 16px;
   border-bottom: 1px solid var(--border); }
 .pl-top nav { display: flex; flex-wrap: wrap; gap: 4px 8px; align-items: center; }
-.pl-wide { max-width: 1000px; margin: 0 auto; padding: 24px 16px 60px; }
+.pl-wide { max-width: 1000px; margin: 0 auto; padding: 24px 16px 96px; }
 .pl-tiles { display: grid; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); gap: 12px; margin-bottom: 28px; }
 .pl-tile { display: flex; gap: 12px; align-items: flex-start; min-height: 88px; padding: 16px; border-radius: 10px; border: 1px solid var(--border);
   background: var(--bg-surface); color: var(--text); text-decoration: none; }
