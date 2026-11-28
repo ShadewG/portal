@@ -51,6 +51,15 @@ export default async function NoAccessPage({ searchParams }: { searchParams: Pro
               <a className="pl-link" href="/" target="_top">Back to Home</a>
             </div>
           </>
+        ) : view.refused && !view.open ? (
+          <>
+            <h1>{view.full} is not open for you</h1>
+            {view.line && <p className="pl-dim">{view.line}</p>}
+            <p data-refused="1">{view.refused}</p>
+            <div className="pl-row" style={{ marginTop: 20 }}>
+              <a className="pl-btn pl-btn-main" href="/" target="_top">Back to Home</a>
+            </div>
+          </>
         ) : (
           <AskBox view={view} />
         )}

@@ -1,10 +1,10 @@
 import { Prisma } from "@prisma/client";
 import { prisma } from "@/lib/db";
-import { getAppById } from "@/lib/apps";
+import { getAppById, sections } from "@/lib/apps";
 import { getGrant, isKnownGrant } from "@/lib/grants";
 import { grantAllowed, grantedIds, isOwner } from "@/lib/access";
 import {
-  ACCESS_ADMIN_GRANT, AccessChangeError, canManageAccess, setAccessAdmin, setGrants, targetRefusal, type Actor,
+  ACCESS_ADMIN_GRANT, AccessChangeError, accessLevelOf, canManageAccess, setAccessAdmin, setGrants, targetRefusal, type Actor,
 } from "@/lib/accessChanges";
 import { publicId, type Viewer } from "@/lib/accessAdmin";
 import { nameBook, realName } from "@/lib/peopleNames";
@@ -36,9 +36,52 @@ export function askable(grantId: unknown): grantId is string {
   return !!app && !app.allowedDiscordId && !app.signInOff;
 }
 
+/** Old or not-in-use tools nobody should ask for (X6 polish, Samuel's look at Home 28 Nov): the Archive group, tiles
+ *  with no Portal gate (the grant only shows a tile: FOIA Bot, Departments, Invoicing) and dead apps (Patreon preview:
+ *  patreon.insanity.team answers 410, inventory/apps.md). They are never offered and the server refuses an ask. */
+const ARCHIVE_APPS = new Set(sections.filter((x) => x.id === "archive").flatMap((x) => x.apps.map((a) => a.id)));
+const NOT_IN_USE = new Set(["patreon"]);
+export function retiredGrant(grantId: string): boolean {
+  if (grantId === ACCESS_ADMIN_GRANT) return false;
+  const g = getGrant(grantId);
+  if (!g) return true;
+  if (ARCHIVE_APPS.has(g.app) || NOT_IN_USE.has(g.app)) return true;
+  return g.kind === "app" && getGrant(g.app)?.effect === "tile-only";
+}
+
+/** Owner-decided things a plain member may not ask for (X6 polish): every owner-only grant in lib/grants.ts (investor
+ *  Cases dashboard, the Hiring grant, Servers in Pulse) and Frontwind Dubbing (confidential, the owner's own list in
+ *  lib/frontwindAccess.ts). Takedowns stays askable: the Copyright plan gives people without access an "Ask for access"
+ *  button. Owner, access admins and Portal admins may still ask (the owner answers). */
+const OWNER_DECIDES = new Set(["frontwind-dubbing"]);
+export function ownerDecides(grantId: string): boolean {
+  return grantId !== ACCESS_ADMIN_GRANT && (getGrant(grantId)?.ownerOnly === true || OWNER_DECIDES.has(grantId));
+}
+
+/** Is this person a plain member (not owner, access admin or Portal admin)? */
+async function plainMember(discordId: string): Promise<boolean> {
+  return (await accessLevelOf({ discordId, username: null })) === null;
+}
+
+/** Why this person may not ask for this grant (a plain line for the no-access page and the 403), null = may ask. */
+export async function askRefusal(discordId: string, grantId: string): Promise<string | null> {
+  if (retiredGrant(grantId)) return "This is an old tool or one with its own sign-in. It cannot be asked for here.";
+  if (ownerDecides(grantId) && (await plainMember(discordId))) {
+    return `Only ${(await deciders()).owner} gives this one. It cannot be asked for here.`;
+  }
+  return null;
+}
+
+/** App grant ids this person may ask for (Home "N more apps" list). Owned apps are filtered on Home. */
+export async function offeredFor(discordId: string): Promise<string[]> {
+  const plain = await plainMember(discordId);
+  return sections.flatMap((x) => x.apps).map((a) => a.id)
+    .filter((id) => askable(id) && !retiredGrant(id) && !(plain && ownerDecides(id)));
+}
+
 /** Only the owner answers this ask (owner-only grants, and naming an access admin). */
 export function ownerOnlyAsk(grantId: string): boolean {
-  return grantId === ACCESS_ADMIN_GRANT || getGrant(grantId)?.ownerOnly === true;
+  return grantId === ACCESS_ADMIN_GRANT || ownerDecides(grantId);
 }
 
 /** One line of text from a person: control characters and line breaks become spaces, trimmed, capped. */
@@ -116,6 +159,8 @@ export interface NoAccessView {
   grantId: string; name: string; line: string; full: string; holderNote: string | null;
   deciders: string; ownerOnly: boolean; has: boolean; openHref: string;
   open: { at: string } | null; last: ReturnType<typeof answerOf>;
+  /** Set when this person may not ask (old tool, or owner-decided for a plain member): shown instead of the button. */
+  refused: string | null;
 }
 
 /** Everything the no-access page shows for one signed-in person and one grant. Unknown or personal grant = null. */
@@ -134,12 +179,15 @@ export async function noAccessView(discordId: string, grantId: unknown): Promise
     openHref: openHref(grantId),
     open: isOpen && latest ? { at: latest.createdAt.toISOString() } : null,
     last: isOpen ? null : answerOf(latest),
+    refused: await askRefusal(discordId, grantId),
   };
 }
 
 /** Ask for a grant. Already have it: { state: "has" }. Already asked: the open ask (never a second row). */
 export async function createAsk(discordId: string, grantId: unknown, reasonIn: unknown): Promise<{ state: "open" | "has"; at?: string; already?: boolean }> {
   if (!askable(grantId)) throw new AccessChangeError("bad_request", "You cannot ask for this here.");
+  const refused = await askRefusal(discordId, grantId);
+  if (refused) throw new AccessChangeError("forbidden", refused);
   const user = await prisma.user.findUnique({ where: { discordId }, select: { id: true, discordId: true, isAdmin: true } });
   if (!user) throw new AccessChangeError("forbidden", "Sign in again, then ask.");
   if (await hasNow(user, grantId)) return { state: "has" };

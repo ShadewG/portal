@@ -17,7 +17,7 @@ import "./plain.css";
 
 interface Me { access: Record<string, boolean>; isAdmin: boolean; discordId?: string }
 interface Ask { grantId: string; name: string; state: string; at: string; answeredAt: string | null; by: string | null; note: string | null }
-interface Who { can: "manage" | "read" | null; waiting: number; asks: Ask[]; tiles: string[] }
+interface Who { can: "manage" | "read" | null; waiting: number; asks: Ask[]; tiles: string[]; offer: string[] }
 
 const homeApps: AppConfig[] = sections.flatMap((s) => s.apps).filter((a) => !a.signInOff);
 const open = (app: string, next?: string) => `/api/auth/redirect?${new URLSearchParams(next ? { app, next } : { app }).toString()}`;
@@ -63,7 +63,7 @@ export default function Home() {
       if (!res.ok) throw new Error(String(res.status));
       setMe(await res.json());
       const w = await fetch("/api/access/me", { cache: "no-store" }).then((r) => (r.ok ? r.json() : null)).catch(() => null);
-      setWho(w ? { can: w.can ?? null, waiting: Number(w.waiting) || 0, asks: Array.isArray(w.asks) ? w.asks : [], tiles: Array.isArray(w.tiles) ? w.tiles : [] } : null);
+      setWho(w ? { can: w.can ?? null, waiting: Number(w.waiting) || 0, asks: Array.isArray(w.asks) ? w.asks : [], tiles: Array.isArray(w.tiles) ? w.tiles : [], offer: Array.isArray(w.offer) ? w.offer : [] } : null);
       setStatus("ok");
     } catch {
       setStatus("error");
@@ -77,12 +77,19 @@ export default function Home() {
   const access = me?.access ?? {};
   const own = homeApps.filter((a) => access[a.id]);
   const tabTiles = (who?.tiles ?? []).filter((id) => TAB_TILES[id]);
-  // personal apps (one named person) are never offered to anyone else
-  const locked = homeApps.filter((a) => !access[a.id] && !a.allowedDiscordId);
+  // Offered = what the server says this person may ask for (/api/access/me offer): never personal apps, old tools
+  // (Archive, tile only, dead) or owner-decided ones for a plain member. No answer from the server: offer nothing.
+  const offer = new Set(who?.offer ?? []);
+  const locked = homeApps.filter((a) => !access[a.id] && !a.allowedDiscordId && offer.has(a.id));
   const asks = who?.asks ?? [];
   const askOf = new Map(asks.map((a) => [a.grantId, a]));
   const shownAsks = asks.filter((a) => a.state === "open" || Date.now() - Date.parse(a.answeredAt ?? a.at) < RECENT_MS);
-  const lockedAsked = locked.filter((a) => askOf.get(a.id)?.state === "open").length;
+  // Open asks for things not in the offered list (a Pulse tab like Servers, or an ask made before a tool was retired)
+  // get a row too, so the "N asked" badge and "Your asks" always agree.
+  const lockedIds = new Set(locked.map((a) => a.id));
+  const askedElsewhere = asks.filter((a) => a.state === "open" && !lockedIds.has(a.grantId) && !access[a.grantId]);
+  const rows = locked.length + askedElsewhere.length;
+  const openAsks = asks.filter((a) => a.state === "open").length;
 
   return (
     <div className="pl pl-page">
@@ -135,12 +142,21 @@ export default function Home() {
               </section>
             )}
 
-            {locked.length > 0 && (
+            {rows > 0 && (
               <details className="pl-more">
                 <summary className="pl-sum">
-                  {locked.length} more {locked.length === 1 ? "app" : "apps"}: Ask for access
-                  {lockedAsked > 0 && <span className="pl-badge" style={{ marginLeft: "auto" }}>{lockedAsked} asked</span>}
+                  {rows} more {rows === 1 ? "app" : "apps"}: Ask for access
+                  {openAsks > 0 && <span className="pl-badge" style={{ marginLeft: "auto" }} data-asked={openAsks}>{openAsks} asked</span>}
                 </summary>
+                {askedElsewhere.map((a) => (
+                  <div className="pl-locked" key={a.grantId}>
+                    <div>
+                      <span className="pl-tile-name">{a.name}</span>
+                      <span className="pl-tile-line">{plainOf(a.grantId).line}</span>
+                    </div>
+                    <span className="pl-badge">Asked {day(a.at)}</span>
+                  </div>
+                ))}
                 {locked.map((a) => {
                   const asked = askOf.get(a.id);
                   return (

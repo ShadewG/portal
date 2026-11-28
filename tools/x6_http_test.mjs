@@ -78,7 +78,27 @@ try {
   const np = await html(W, "/no-access?want=pulse");
   check("member: page says what it is, who decides, one Ask button", has(np, "Pulse is not open for you yet", "Production numbers, stuck cases", "Samuel, Ayoub or Atom decide who can open it.", "Ask for access"));
   check("member: page has no system words", !/PORTAL HANDOFF|LOCKED|Command Center|Authenticate|insanity\.team/i.test(np.replace(/<script[\s\S]*?<\/script>/g, "")));
-  check("member: owner-only grant names only Samuel", has(await html(W, "/no-access?want=pulse.servers"), "Servers in Pulse is not open for you yet", "Samuel decides who can open it."));
+  // X6 polish: owner-decided things and old tools are never offered to a plain member and cannot be asked for
+  const sv = await html(W, "/no-access?want=pulse.servers");
+  check("member: owner-only grant = plain line, no Ask button", has(sv, "Servers in Pulse is not open for you", "Only Samuel gives this one. It cannot be asked for here.") && !sv.includes("Ask for access"));
+  const fb = await html(W, "/no-access?want=foia-bot");
+  check("member: old tool (Archive) = plain line, no Ask button", has(fb, "This is an old tool or one with its own sign-in.") && !fb.includes("Ask for access"));
+  for (const g of ["cases-dashboard", "pulse.servers", "pulse.hiring", "frontwind-dubbing"]) {
+    const r = await ask(W, g, "");
+    check(`member: ask for owner-decided ${g} = 403 in plain words, no row`, r.status === 403 && r.json?.error === "Only Samuel gives this one. It cannot be asked for here."
+      && (await Q(`select count(*)::int n from "AccessRequest" where "userId"=$1 and "grantId"=$2`, [WISE, g]))[0].n === 0);
+  }
+  for (const g of ["foia-bot", "patreon", "pd-lookup", "invoicing"]) {
+    const r = await ask(W, g, "");
+    check(`member: ask for old / tile-only ${g} = 403 (or has)`, (r.status === 403 && /old tool/.test(r.json?.error ?? "")) || r.json?.state === "has");
+  }
+  const wOffer = (await call(W, "GET", "/api/access/me")).json.offer ?? [];
+  check("member: Home offer has no owner-decided or old tools, keeps Pulse + Takedowns-free app list",
+    ["cases-dashboard", "frontwind-dubbing", "foia-bot", "patreon", "pd-lookup", "invoicing", "kpi", "ayoub-private-assistant"].every((g) => !wOffer.includes(g)) && wOffer.includes("pulse"), wOffer.join(","));
+  const tk = await ask(W, "pulse.takedowns", "");
+  check("member: Takedowns stays askable (Copyright plan: Ask for access button)", tk.status === 200 && tk.json?.state === "open");
+  const sOffer = (await call(AT, "GET", "/api/access/me")).json.offer ?? [];
+  check("access admin: owner-decided apps still offered (owner answers), old tools not", sOffer.includes("cases-dashboard") && !sOffer.includes("foia-bot"));
   check("member: personal app = no ask button", has(await html(W, "/no-access?want=ayoub-private-assistant"), "This page is not open for you") && !(await html(W, "/no-access?want=ayoub-private-assistant")).includes("Ask for access"));
   check("member: unknown want = no ask button", !(await html(W, "/no-access?want=nope")).includes("Ask for access"));
   const hasFs = await rowOn(WISE, "foia-sorter");
@@ -152,14 +172,17 @@ try {
   check("answer with a bad action 400", (await answer(AY, rowFor(await reqs(AY), "wisedumdum", target)?.id, "maybe")).status === 400);
 
   // ---- owner-only ask ----
-  await ask(W, "pulse.servers", "");
-  const oRowAt = rowFor(await reqs(AT), "wisedumdum", "pulse.servers");
+  // a plain member may not ask for owner-only grants any more: Harald (read-only Portal admin) asks instead
+  const HAR = await uid("hareld");
+  const hAsk = await ask(H, "pulse.servers", "");
+  check("Portal admin may ask for an owner-only grant", hAsk.status === 200 && hAsk.json?.state === "open", `HTTP ${hAsk.status} ${hAsk.json?.state ?? hAsk.json?.error ?? ""}`);
+  const oRowAt = rowFor(await reqs(AT), "hareld", "pulse.servers");
   check("owner-only ask: Atom sees 'Only Samuel can answer this one.'", oRowAt && !oRowAt.canAnswer && oRowAt.whyNot === "Only Samuel can answer this one.");
-  check("owner-only ask: Atom approve 403, nothing written", (await answer(AT, oRowAt.id, "approve")).status === 403 && !(await rowOn(WISE, "pulse.servers")));
+  check("owner-only ask: Atom approve 403, nothing written", (await answer(AT, oRowAt.id, "approve")).status === 403 && !(await rowOn(HAR, "pulse.servers")));
   check("owner-only ask: Ayoub decline 403 too", (await answer(AY, oRowAt.id, "decline")).status === 403);
   const oAp = await answer(S, oRowAt.id, "approve");
-  check("owner approves owner-only ask", oAp.status === 200 && (await rowOn(WISE, "pulse.servers")) && !!oAp.json.changeId);
-  check("owner Undo", (await call(S, "POST", "/api/access/admin/revert", { changeId: oAp.json.changeId })).status === 200 && !(await rowOn(WISE, "pulse.servers")));
+  check("owner approves owner-only ask", oAp.status === 200 && (await rowOn(HAR, "pulse.servers")) && !!oAp.json.changeId);
+  check("owner Undo", (await call(S, "POST", "/api/access/admin/revert", { changeId: oAp.json.changeId })).status === 200 && !(await rowOn(HAR, "pulse.servers")));
 
   // ---- own ask ----
   const ATOM = await uid("atomboy7");
@@ -192,7 +215,7 @@ try {
   check("full Pulse holder: no extra Hiring tile", JSON.stringify((await call(S, "GET", "/api/access/me")).json.tiles) === "[]");
 
   // ---- limits ----
-  const many = ["pulse", "patreon", "script-reviewer", "insanity-extension", "frontwind-dubbing", "foia-researcher", "autobot", "police-report-analyzer", "foia-sorter", "pd-lookup", "foia-bot", "pulse.takedowns"];
+  const many = ["pulse", "script-reviewer", "insanity-extension", "foia-researcher", "autobot", "police-report-analyzer", "foia-sorter", "pulse.takedowns", "desk.production", "foia-sorter.distribution", "foia-sorter.patreon", "foia-sorter.podcast"];
   const outs = [];
   for (const g of many) { const r = await ask(M, g, ""); outs.push(r.status === 409 ? "409" : r.json?.state ?? `HTTP ${r.status}`); }
   const openM = (await Q(`select count(*)::int n from "AccessRequest" a join "User" u on u.id=a."userId" where u."discordId"='test:member' and a.state='open'`))[0].n;

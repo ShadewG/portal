@@ -18,7 +18,7 @@ import pg from "pg";
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 dotenv.config({ path: path.join(root, ".env"), quiet: true });
 if (!/\/portal_dev(\?|$)/.test(process.env.DATABASE_URL ?? "")) { console.error("refused: DATABASE_URL is not portal_dev"); process.exit(2); }
-const B = "http://127.0.0.1:3900";
+const B = process.env.PORTAL_BASE ?? "http://127.0.0.1:3900"; // X6: the merged copy runs on :3906
 const SESS = process.env.X3_SESSIONS ?? "/opt/access-dev/x3/sessions";
 const db = new pg.Pool({ connectionString: process.env.DATABASE_URL });
 const Q = async (sql, args = []) => (await db.query(sql, args)).rows;
@@ -63,8 +63,11 @@ try {
   check("access/me: plain member null", (await me(W)).can === null);
   check("access/me: signed out null", (await call(null, "GET", "/api/access/me")).json.can === null);
   const page = async (c, u) => (await call(c, "GET", u)).status;
-  check("/access page: owner, Ayoub, Atom, Harald 200; member 404",
-    (await page(S, "/access")) === 200 && (await page(AY, "/access")) === 200 && (await page(AT, "/access")) === 200 && (await page(H, "/access")) === 200 && (await page(W, "/access")) === 404);
+  // X6: a member is sent to the one no-access page (307 to /no-access?want=portal.access-admin), was a bare 404
+  const wAccess = await call(W, "GET", "/access");
+  check("/access page: owner, Ayoub, Atom, Harald 200; member -> no-access page",
+    (await page(S, "/access")) === 200 && (await page(AY, "/access")) === 200 && (await page(AT, "/access")) === 200 && (await page(H, "/access")) === 200
+    && wAccess.status === 307 && wAccess.location.includes("/no-access?want=portal.access-admin"));
   const hs = await call(H, "GET", "/api/access/admin");
   check("Harald: /access state read only", hs.status === 200 && hs.json.viewer.can === "read");
   const item = { userId: WISE, changes: [{ grantId: "kpi", granted: true, expect: false }] };
@@ -119,7 +122,9 @@ try {
   } else check("N1: a user with a ref exists for Ayoub", false);
   // N4: no KPI tile while its hand-off is off (Home is server-rendered with the tile list)
   const homeHtml = (await call(ED, "GET", "/")).text;
-  check("N4: Home has no KPI tile while signInOff", homeHtml.length > 1000 && !homeHtml.includes("kpi.insanity.team") && homeHtml.includes("pulse.insanity.team"));
+  // X6: Home is drawn in the browser from /api/me + /api/access/me (no app addresses in the page); KPI is not offered
+  const edWho = await me(ED);
+  check("N4: Home has no KPI tile while signInOff", homeHtml.length > 1000 && !homeHtml.includes("kpi.insanity.team") && Array.isArray(edWho.offer) && !edWho.offer.includes("kpi"));
 
   // ---- B4: names, effect, hidden toggles ----
   const st = (await call(S, "GET", "/api/access/admin")).json;
@@ -167,7 +172,8 @@ try {
   check("B0: TEST lead has Pulse, is no admin", tl?.access?.pulse === true && tl.isAdmin === false);
   check("B0: TEST reviewer: no whole Pulse, handoff to Pulse admitted by pulse.hiring", tr?.access?.pulse === false && (await call(TR, "GET", "/api/auth/redirect?app=pulse")).location.startsWith("https://pulse.insanity.team/"));
   check("B0: TEST member: Desk + Invoicing, no Pulse", tm?.access?.desk === true && tm.access.invoicing === true && tm.access.pulse === false);
-  check("B0: TEST lead cannot open /access", (await call(TL, "GET", "/access")).status === 404 && (await me(TL)).can === null);
+  const tlAccess = await call(TL, "GET", "/access");
+  check("B0: TEST lead cannot open /access (no-access page)", tlAccess.status === 307 && tlAccess.location.includes("/no-access?want=portal.access-admin") && (await me(TL)).can === null);
   check("B0: TEST member learn = try again (never asked Discord)", (await learn(TM)).status === 503);
   const deskRow = (await Q(`select a."grantedBy" from "AppAccess" a join "User" u on u.id=a."userId" where u."discordId"='test:member' and a."appId"='desk'`))[0];
   check("B0: TEST member Desk row not touched by the team sync (grantedBy owner, not auto)", deskRow && deskRow.grantedBy !== "auto:discord-team");

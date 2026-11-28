@@ -15,7 +15,7 @@ import pg from "pg";
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 dotenv.config({ path: path.join(root, ".env"), quiet: true });
 if (!/\/portal_dev(\?|$)/.test(process.env.DATABASE_URL ?? "")) { console.error("refused: DATABASE_URL is not portal_dev"); process.exit(2); }
-const B = "http://127.0.0.1:3900";
+const B = process.env.PORTAL_BASE ?? "http://127.0.0.1:3900"; // X6: the merged copy runs on :3906
 const db = new pg.Pool({ connectionString: process.env.DATABASE_URL });
 const Q = async (sql, args = []) => (await db.query(sql, args)).rows;
 
