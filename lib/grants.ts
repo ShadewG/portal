@@ -95,6 +95,21 @@ export function isKnownGrant(id: unknown): id is string {
   return typeof id === "string" && byId.has(id);
 }
 
+/** X7 owner ask (R-2000 backtest, 28 Nov 2026): the Hiring grant does something only while the hiring desk switch
+ *  HIRING_PORTAL_GRANTS is on. Portal cannot see the desk's env, so it reads the same switch from its own env
+ *  (PULSE_HIRING_GRANTS_ON, or HIRING_PORTAL_GRANTS by the desk's name); set both together. Default off. */
+export function hiringGrantsOn(): boolean {
+  const v = (process.env.PULSE_HIRING_GRANTS_ON ?? process.env.HIRING_PORTAL_GRANTS ?? "").trim().toLowerCase();
+  return v === "1" || v === "true" || v === "on";
+}
+
+/** Does the /access page show this toggle? Toggles that change nothing today stay hidden (B4), except the Hiring
+ *  switch for the owner once hiringGrantsOn() (only the owner may change it anyway: owner-only). */
+export function toggleShown(g: GrantDef, viewerIsOwner: boolean): boolean {
+  if (g.effect !== "none") return true;
+  return g.id === "pulse.hiring" && viewerIsOwner && hiringGrantsOn();
+}
+
 /** Tab grants under one app, in catalog order. */
 /** What comes with the Pulse app grant and has no toggle of its own (plain tab names for the /access page). */
 export const PULSE_INCLUDED_TABS = ["Production", "Stuck cases", "Patreon", "FOIA cases"] as const;

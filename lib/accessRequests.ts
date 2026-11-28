@@ -50,10 +50,11 @@ export function retiredGrant(grantId: string): boolean {
   return g.kind === "app" && getGrant(g.app)?.effect === "tile-only";
 }
 
-/** Owner-decided things a plain member may not ask for (X6 polish): every owner-only grant in lib/grants.ts (investor
- *  Cases dashboard, the Hiring grant, Servers in Pulse) and Frontwind Dubbing (confidential, the owner's own list in
- *  lib/frontwindAccess.ts). Takedowns stays askable: the Copyright plan gives people without access an "Ask for access"
- *  button. Owner, access admins and Portal admins may still ask (the owner answers). */
+/** Owner-decided things (X6 polish): every owner-only grant in lib/grants.ts (investor Cases dashboard, the Hiring
+ *  grant, Servers in Pulse) and Frontwind Dubbing (confidential, the owner's own list in lib/frontwindAccess.ts).
+ *  X7 owner ask (R-2000 backtest, 28 Nov 2026): anyone signed in may ask for one from its own no-access page; only the
+ *  owner answers (ownerOnlyAsk). They are still not listed on a plain member's Home "N more apps" (no clutter).
+ *  Takedowns is a plain grant (askable, answered by any access admin). */
 const OWNER_DECIDES = new Set(["frontwind-dubbing"]);
 export function ownerDecides(grantId: string): boolean {
   return grantId !== ACCESS_ADMIN_GRANT && (getGrant(grantId)?.ownerOnly === true || OWNER_DECIDES.has(grantId));
@@ -66,10 +67,8 @@ async function plainMember(discordId: string): Promise<boolean> {
 
 /** Why this person may not ask for this grant (a plain line for the no-access page and the 403), null = may ask. */
 export async function askRefusal(discordId: string, grantId: string): Promise<string | null> {
+  void discordId; // same signature as before: the rule no longer depends on who asks (X7 owner ask)
   if (retiredGrant(grantId)) return "This is an old tool or one with its own sign-in. It cannot be asked for here.";
-  if (ownerDecides(grantId) && (await plainMember(discordId))) {
-    return `Only ${(await deciders()).owner} gives this one. It cannot be asked for here.`;
-  }
   return null;
 }
 

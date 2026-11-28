@@ -78,16 +78,34 @@ try {
   const np = await html(W, "/no-access?want=pulse");
   check("member: page says what it is, who decides, one Ask button", has(np, "Pulse is not open for you yet", "Production numbers, stuck cases", "Samuel, Ayoub or Atom decide who can open it.", "Ask for access"));
   check("member: page has no system words", !/PORTAL HANDOFF|LOCKED|Command Center|Authenticate|insanity\.team/i.test(np.replace(/<script[\s\S]*?<\/script>/g, "")));
-  // X6 polish: owner-decided things and old tools are never offered to a plain member and cannot be asked for
+  // X7 owner ask (R-2000 backtest): owner-decided things CAN be asked for from their own page (only Samuel answers);
+  // old tools still cannot. They stay off a plain member's Home offer (checked below).
   const sv = await html(W, "/no-access?want=pulse.servers");
-  check("member: owner-only grant = plain line, no Ask button", has(sv, "Servers in Pulse is not open for you", "Only Samuel gives this one. It cannot be asked for here.") && !sv.includes("Ask for access"));
+  check("member: owner-only grant = Samuel decides + Ask button", has(sv, "Servers in Pulse is not open for you", "Samuel decides who can open it.", "Ask for access") && !sv.includes("gives this one"));
+  const hv = await html(W, "/no-access?want=pulse.hiring");
+  check("member: Hiring page = Samuel decides + Ask button", has(hv, "Samuel decides who can open it.", "Ask for access"));
   const fb = await html(W, "/no-access?want=foia-bot");
   check("member: old tool (Archive) = plain line, no Ask button", has(fb, "This is an old tool or one with its own sign-in.") && !fb.includes("Ask for access"));
   for (const g of ["cases-dashboard", "pulse.servers", "pulse.hiring", "frontwind-dubbing"]) {
     const r = await ask(W, g, "");
-    check(`member: ask for owner-decided ${g} = 403 in plain words, no row`, r.status === 403 && r.json?.error === "Only Samuel gives this one. It cannot be asked for here."
-      && (await Q(`select count(*)::int n from "AccessRequest" where "userId"=$1 and "grantId"=$2`, [WISE, g]))[0].n === 0);
+    check(`member: ask for owner-decided ${g} = 200 open, one row`, r.status === 200 && r.json?.state === "open"
+      && (await Q(`select count(*)::int n from "AccessRequest" where "userId"=$1 and "grantId"=$2 and state='open'`, [WISE, g]))[0].n === 1, `HTTP ${r.status} ${r.json?.state ?? r.json?.error ?? ""}`);
+    const atR = rowFor(await reqs(AT), "wisedumdum", g);
+    check(`owner-decided ${g}: Atom sees 'Only Samuel can answer this one.', approve 403`, atR && !atR.canAnswer && atR.whyNot === "Only Samuel can answer this one."
+      && (await answer(AT, atR.id, "approve")).status === 403 && !(await rowOn(WISE, g)));
+    const sR = rowFor(await reqs(S), "wisedumdum", g);
+    check(`owner-decided ${g}: Samuel may answer`, !!sR?.canAnswer);
   }
+  check("member: owner-decided page now says Asked, Samuel will answer", has(await html(W, "/no-access?want=pulse.hiring"), "You asked for", "Samuel will answer."));
+  // free Wise's open-ask slots for the rest of the run (the end clean-up deletes them anyway)
+  await Q(`delete from "AccessRequest" where "userId"=$1 and "createdAt" >= $2 and "grantId" = any($3)`, [WISE, start, ["cases-dashboard", "pulse.servers", "pulse.hiring", "frontwind-dubbing"]]);
+  // X7 owner ask (2): the Hiring switch on Samuel's person page follows HIRING_PORTAL_GRANTS / PULSE_HIRING_GRANTS_ON
+  const hOn = ["1", "true", "on"].includes((process.env.PULSE_HIRING_GRANTS_ON ?? process.env.HIRING_PORTAL_GRANTS ?? "").trim().toLowerCase());
+  const catOf = async (c) => Object.fromEntries(((await call(c, "GET", "/api/access/admin")).json?.catalog ?? []).map((g) => [g.id, g]));
+  const sCat = await catOf(S), atCat = await catOf(AT);
+  check(`owner: Hiring switch shown = switch ${hOn ? "on" : "off"}`, sCat["pulse.hiring"]?.shown === hOn, String(sCat["pulse.hiring"]?.shown));
+  check("access admin: Hiring switch never shown (owner-only)", atCat["pulse.hiring"]?.shown === false);
+  check("owner: Servers and Takedowns switches stay hidden (no effect yet)", sCat["pulse.servers"]?.shown === false && sCat["pulse.takedowns"]?.shown === false && sCat.pulse?.shown === true);
   for (const g of ["foia-bot", "patreon", "pd-lookup", "invoicing"]) {
     const r = await ask(W, g, "");
     check(`member: ask for old / tile-only ${g} = 403 (or has)`, (r.status === 403 && /old tool/.test(r.json?.error ?? "")) || r.json?.state === "has");
@@ -172,7 +190,7 @@ try {
   check("answer with a bad action 400", (await answer(AY, rowFor(await reqs(AY), "wisedumdum", target)?.id, "maybe")).status === 400);
 
   // ---- owner-only ask ----
-  // a plain member may not ask for owner-only grants any more: Harald (read-only Portal admin) asks instead
+  // Harald (read-only Portal admin) asks; a plain member may ask too since X7 (checked above)
   const HAR = await uid("hareld");
   const hAsk = await ask(H, "pulse.servers", "");
   check("Portal admin may ask for an owner-only grant", hAsk.status === 200 && hAsk.json?.state === "open", `HTTP ${hAsk.status} ${hAsk.json?.state ?? hAsk.json?.error ?? ""}`);

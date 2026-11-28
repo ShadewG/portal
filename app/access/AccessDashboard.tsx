@@ -14,6 +14,8 @@ type Effect = "now" | "next-sign-in" | "tile-only" | "none";
 interface Grant {
   id: string; label: string; full: string; app: string; kind: "app" | "tab"; enforced: boolean;
   ownerOnly: boolean; effect: Effect; note: string | null; toggleNote?: string | null;
+  /** Server decides (lib/grants.ts toggleShown): the owner's Hiring switch shows once HIRING_PORTAL_GRANTS is on. */
+  shown?: boolean;
 }
 interface Person {
   id: string; username: string; name: string | null; avatarUrl: string | null; isOwner: boolean; isAdmin: boolean; isAccessAdmin: boolean;
@@ -72,7 +74,7 @@ const EFFECT_WORDS: Record<Effect, { text: string; title: string } | null> = {
   "none": null,
 };
 /** Toggles that change nothing today are hidden (B4); they are listed read only under "Not in use yet". */
-const inUse = (g: Grant) => g.effect !== "none";
+const inUse = (g: Grant) => g.shown ?? g.effect !== "none";
 
 function Who({ p, size = 12 }: { p: Person; size?: number }) {
   return (
