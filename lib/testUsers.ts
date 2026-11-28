@@ -16,6 +16,12 @@ export function isTestUser(u: { username?: unknown; discordId?: unknown } | null
     && typeof u?.discordId === "string" && u.discordId.startsWith(TEST_ID_PREFIX);
 }
 
+/** A test Discord id ("test:..."). Sign-in routes never create a User row for one (review S7): a test session whose row
+ *  was removed is refused instead of bringing the user back. */
+export function isTestDiscordId(discordId: unknown): boolean {
+  return typeof discordId === "string" && discordId.startsWith(TEST_ID_PREFIX);
+}
+
 /** True when this session claim set belongs to a test user whose time is up (or has no end time). */
 export function testSessionExpired(token: Record<string, unknown>, now = Date.now()): boolean {
   if (typeof token.discordId !== "string" || !token.discordId.startsWith(TEST_ID_PREFIX)) return false;

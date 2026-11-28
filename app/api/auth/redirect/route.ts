@@ -8,6 +8,7 @@ import { applyPendingGrants } from "@/lib/pendingAccess";
 import { portalOrigin } from "@/lib/portalOrigin";
 import { syncTeamDesk, type TeamCheck } from "@/lib/teamAccess";
 import { teamMember } from "@/lib/teamRule";
+import { isTestDiscordId } from "@/lib/testUsers";
 
 function resolveReturnTo(appUrl: string, allowedOrigins: string[] | undefined, returnTo: string | null) {
   if (!returnTo) return null;
@@ -122,6 +123,11 @@ export async function GET(req: NextRequest) {
   const avatar = (user?.avatar as string) ?? null;
   const email = (user?.email as string) ?? null;
   const envAdmin = discordId === process.env.ADMIN_DISCORD_ID;
+
+  // B0 test users are made by tools/test_users.mjs only: a test session whose row was removed is refused (review S7)
+  if (isTestDiscordId(discordId) && !(await prisma.user.findUnique({ where: { discordId }, select: { id: true } }))) {
+    return new Response("This test session has ended.", { status: 403, headers: { "Content-Type": "text/plain" } });
+  }
 
   const dbUser = await prisma.user.upsert({
     where: { discordId },

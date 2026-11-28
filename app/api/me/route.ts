@@ -3,6 +3,7 @@ import { prisma } from "@/lib/db";
 import { accessMap } from "@/lib/access";
 import { applyPendingGrants } from "@/lib/pendingAccess";
 import { syncTeamDesk } from "@/lib/teamAccess";
+import { isTestDiscordId } from "@/lib/testUsers";
 
 /** GET /api/me — upsert user + return access map */
 export async function GET() {
@@ -12,6 +13,11 @@ export async function GET() {
     const discordId = user?.discordId as string | undefined;
 
     if (!discordId) {
+      return Response.json({ error: "Not authenticated" }, { status: 401 });
+    }
+
+    // B0 test users are made by tools/test_users.mjs only: a test session whose row was removed is refused (review S7)
+    if (isTestDiscordId(discordId) && !(await prisma.user.findUnique({ where: { discordId }, select: { id: true } }))) {
       return Response.json({ error: "Not authenticated" }, { status: 401 });
     }
 

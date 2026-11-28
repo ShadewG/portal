@@ -15,7 +15,7 @@
 // mint: ONLY for a user that carries both test markers. Reads AUTH_SECRET and AUTH_URL from the env file itself
 //   (--env, default <repo>/.env), which must be mode 600 or stricter. Session lasts --hours (default 12, max 24);
 //   auth.ts refuses it after that time. The cookie is written to <out>/<role>.cookie (dir 700, file 600, default
-//   /root/portal-test-sessions) and never printed. Use: curl -b @<file> or a browser cookie.
+//   /root/portal-test-sessions) and never printed. Use: curl -b <file> (a Netscape cookie file) or a browser cookie.
 import { registerHooks } from "node:module";
 import { existsSync, mkdirSync, readFileSync, statSync, writeFileSync, chmodSync } from "node:fs";
 import { pathToFileURL, fileURLToPath } from "node:url";
@@ -102,11 +102,15 @@ try {
           [u.id, u.discordId, u.username, u.email]);
       }
       const items = [];
+      // the row found by Discord id (a leftover row from before review S7 may carry another id than u.id)
+      const now = await present();
       for (const u of TEST_USERS) {
-        const { rows: have } = await q(`SELECT "appId", granted FROM "AppAccess" WHERE "userId" = $1`, [u.id]);
+        const userId = now.find((r) => r.discordId === u.discordId)?.id;
+        if (!userId) die(`${u.username} is missing after create`, 1);
+        const { rows: have } = await q(`SELECT "appId", granted FROM "AppAccess" WHERE "userId" = $1`, [userId]);
         const changes = u.grants.filter((g) => !have.some((h) => h.appId === g && h.granted))
           .map((g) => ({ grantId: g, granted: true, expect: false }));
-        if (changes.length) items.push({ userId: u.id, changes });
+        if (changes.length) items.push({ userId, changes });
       }
       if (items.length) {
         const r = await C.setGrantsMany(actor, items, NOTE);
@@ -126,6 +130,7 @@ try {
       if (items.length) console.log(`grants off: change ${(await C.setGrantsMany(actor, items, `${NOTE}: cleanup`)).changeId}`);
       const del = await q(`DELETE FROM "User" WHERE id = ANY($1) AND username LIKE 'TEST %' AND "discordId" LIKE 'test:%'`, [rows.map((r) => r.id)]);
       console.log(`deleted ${del.rowCount} test users (their AppAccess and AppUserLink rows went with them)`);
+      console.log("now delete the minted cookie files (rm -rf the --out dir of mint, default /root/portal-test-sessions)");
     } else if (!apply) console.log("dry run: nothing written (add --apply)");
   } else if (cmd === "mint") {
     const role = args[1];
