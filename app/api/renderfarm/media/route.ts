@@ -17,12 +17,15 @@ export async function GET(req: Request) {
   try {
     if (!isAlpha(p)) return Response.json({ ready: true, url: await temporaryLink(p), alpha: false }, { headers: { "Cache-Control": "no-store" } });
     const state = await alphaPreview(p);
+    if (state.error) console.error("render farm media: alpha copy failed:", String(state.error).slice(0, 500));
     return Response.json(
-      { ready: state.ready, alpha: true, error: state.error, url: state.ready ? `/api/renderfarm/media/file?path=${encodeURIComponent(p)}` : null },
+      { ready: state.ready, alpha: true, error: state.error ? "This render can't play right now" : undefined, url: state.ready ? `/api/renderfarm/media/file?path=${encodeURIComponent(p)}` : null },
       { headers: { "Cache-Control": "no-store" } },
     );
   } catch (e) {
     const status = (e as { status?: number }).status || 502;
-    return Response.json({ error: String((e as Error).message || e).slice(0, 200) }, { status });
+    // the error can hold a server path: logged on the server only, the browser gets a fixed line
+    console.error("render farm media failed:", String((e as Error).message || e).slice(0, 500));
+    return Response.json({ error: "This render can't play right now" }, { status });
   }
 }

@@ -8,7 +8,7 @@
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import {
-  collapseActivity, failedReason, farmCounts, fmtRange, fmtWhen, parseFarmTime, premiereLine, splitReason, topLine,
+  collapseActivity, failedReason, farmCounts, fmtRange, fmtWhen, noticeText, notionHref, parseFarmTime, premiereLine, splitReason, topLine,
 } from "../lib/renderfarmView.ts";
 
 let n = 0;
@@ -99,9 +99,9 @@ ok("failed reason: no leading ':', no server path on the line, full text in deta
   assert.deepEqual(splitReason("[texted] 'X' "), { plain: "", details: "" });
 });
 ok("a failed card with a blank reason takes its newest failure from the history, else none", () => {
-  assert.equal(failedReason({ name: "A_DOC-3", kind: "texted", reason: "" }, history), loop[0].detail);
-  assert.equal(failedReason({ name: "A_GEARTH-2", kind: "texted", reason: "" }, history), "");
-  assert.equal(failedReason({ name: "A_DOC-3", kind: "texted", reason: "own reason" }, history), "own reason");
+  assert.equal(failedReason({ name: "A_DOC-3", kind: "texted", episode: "IB90", reason: "" }, history), loop[0].detail);
+  assert.equal(failedReason({ name: "A_GEARTH-2", kind: "texted", episode: "IB90", reason: "" }, history), "");
+  assert.equal(failedReason({ name: "A_DOC-3", kind: "texted", episode: "IB90", reason: "own reason" }, history), "own reason");
 });
 
 // S11: counts from both queues (Premiere states of the 28 Nov capture: 5 need a decision, 45 held, 10 done).
@@ -132,6 +132,110 @@ ok("Premiere header says the same as the top line, not '50 in the queue'", () =>
   assert.equal(premiereLine(jobs), "5 need a decision · 45 on hold");
   assert.equal(premiereLine([{ title: "a", state: "queued", held: false }, { title: "b", state: "failed", held: false }]), "1 failed · 1 waiting");
   assert.equal(premiereLine([]), "nothing waiting");
+});
+
+// ---- Fix round 1 (Fable review E2/E3, 28 Nov)
+const at = (time, type, name, episode, detail = "") => ({ timestamp: `2026-11-27T${time}`, type, label: type, name, kind: "texted", episode, detail });
+ok("H1: a failed card never takes another episode's reason (A_PC_1 is in every episode)", () => {
+  const h = [at("12:00:00", "FAIL", "A_PC_1", "IB60", "[texted] 'A_PC_1' : Dropbox down episode=IB60")];
+  assert.equal(failedReason({ name: "A_PC_1", kind: "texted", episode: "IB59", reason: "" }, h), "");
+  assert.equal(failedReason({ name: "A_PC_1", kind: "texted", episode: "IB60", reason: "" }, h), h[0].detail);
+});
+ok("M1: failures of two episodes' same-name cards never fold together", () => {
+  const h = [at("12:02:00", "FAIL", "A_PC_1", "IB60", "[texted] 'A_PC_1' : Dropbox down"), at("12:01:00", "FAIL", "A_PC_1", "IB59", "[texted] 'A_PC_1' : Font missing: Inter")];
+  const items = collapseActivity(h);
+  assert.equal(items.length, 2);
+  assert.ok(items.every((i) => "row" in i));
+});
+ok("M1: a fold keeps every distinct reason (newest shown, the others once with their count)", () => {
+  const h = [
+    at("12:05:00", "FAIL", "X", "IB59", "[texted] 'X' : AE crashed"), at("12:04:00", "PICKUP", "X", "IB59"),
+    at("12:03:00", "FAIL", "X", "IB59", "[texted] 'X' : Font missing: Inter"), at("12:02:00", "PICKUP", "X", "IB59"),
+    at("12:01:00", "FAIL", "X", "IB59", "[texted] 'X' : font missing: inter"), at("12:00:00", "PICKUP", "X", "IB59"),
+  ];
+  const [item] = collapseActivity(h);
+  const r = item.repeat;
+  assert.equal(r.fails, 3);
+  assert.equal(splitReason(r.last.detail).plain, "AE crashed");
+  assert.deepEqual(r.earlier.map((e) => [splitReason(e.detail).plain, e.count]), [["Font missing: Inter", 2]]);
+  const same = collapseActivity([at("12:03:00", "FAIL", "Y", "IB59", "[texted] 'Y' : comp not found"), at("12:01:00", "FAIL", "Y", "IB59", "[texted] 'Y' : comp not found")]);
+  assert.deepEqual(same[0].repeat.earlier, []);
+});
+ok("L1: a fold that starts with a newer 'started' row ends its range at the newest failure", () => {
+  const h = [at("12:09:00", "PICKUP", "X", "IB59"), at("12:05:00", "FAIL", "X", "IB59", "a"), at("12:00:00", "FAIL", "X", "IB59", "a")];
+  const r = collapseActivity(h)[0].repeat;
+  assert.equal(r.to, "2026-11-27T12:05:00");
+  assert.equal(fmtRange(parseFarmTime(r.from), parseFarmTime(r.to), utc("2026-11-27T12:00:00Z"), "Europe/Oslo"), "12:00-12:05");
+});
+ok("M2: next up is a waiting Premiere job, never the one rendering, checking or uploading", () => {
+  const pj = [{ title: "R.prproj", state: "rendering", held: false }, { title: "U.prproj", state: "compared", held: false }, { title: "S.prproj", state: "syncing", held: false, working: true }, { title: "Q.prproj", state: "queued", held: false }];
+  assert.equal(farmCounts({ queue: [], failed: [] }, pj).nextUp, "Q");
+  assert.equal(farmCounts({ queue: [], failed: [] }, pj.slice(0, 2)).nextUp, null);
+  assert.equal(premiereLine([{ title: "R", state: "rendering", held: false }, { title: "Q", state: "queued", held: false }]), "1 waiting");
+  assert.equal(premiereLine([{ title: "R", state: "rendering", held: false }]), "nothing waiting");
+  assert.equal(premiereLine(jobs), "5 need a decision · 45 on hold");
+});
+ok("L1: one bad end of a range shows the good end only; other years show the year", () => {
+  const now = utc("2026-11-27T12:00:00Z");
+  assert.equal(fmtRange(NaN, utc("2026-11-26T11:10:00Z"), now, "UTC"), "26 Nov, 11:10");
+  assert.equal(fmtRange(utc("2026-11-27T11:10:00Z"), NaN, now, "UTC"), "11:10");
+  assert.equal(fmtRange(NaN, NaN, now, "UTC"), "");
+  assert.equal(fmtWhen(utc("2025-12-31T23:00:00Z"), now, "UTC"), "31 Dec 2025, 23:00");
+});
+ok("L1: Windows' Norwegian and US zone-less formats read as Oslo time too", () => {
+  assert.equal(parseFarmTime("27.11.2026 12:42:11"), utc("2026-11-27T11:42:11Z"));
+  assert.equal(parseFarmTime("11/27/2026 12:42:11"), utc("2026-11-27T11:42:11Z"));
+  assert.equal(parseFarmTime("11/27/2026 12:42:11 PM"), utc("2026-11-27T11:42:11Z"));
+  assert.equal(parseFarmTime("7/1/2026 12:00:00"), utc("2026-07-01T10:00:00Z"));
+  assert.ok(Number.isNaN(parseFarmTime("13/40/2026 12:00:00")));
+});
+ok("L3: plain line never holds a UNC, drive, /Volumes, /var path or a link", () => {
+  for (const t of ["could not open \\\\DESKTOP-8GE9O3G\\share\\x.aep", "missing D:/RF/work/x.aep", "missing /Volumes/Media/x.mov", "log at /var/log/x.txt",
+    "upload failed http://100.98.10.32:8443/api/x", "upload failed https://dropbox.com/x"]) {
+    const s = splitReason(t);
+    assert.ok(!/[\\/]|https?:|\d+\.\d+\.\d+\.\d+/.test(s.plain), `${t} -> ${s.plain}`);
+    assert.equal(s.details, t);
+  }
+  assert.equal(splitReason("missing D:/RF/work/x.aep").plain, "Missing");
+  assert.deepEqual(splitReason("Font missing: Inter/Bold"), { plain: "Font missing: Inter/Bold", details: "" }, "a slash inside a word is not a path");
+});
+ok("L4: card links only to Notion over https", () => {
+  for (const u of ["https://www.notion.so/abc", "https://notion.so/abc", "https://insanity.notion.site/abc"]) assert.equal(notionHref(u), u);
+  for (const u of ["javascript:alert(1)", "http://www.notion.so/x", "https://evil.com/notion.so/", "https://notion.so.evil.com/x", "", null, undefined]) assert.equal(notionHref(u), undefined, String(u));
+});
+ok("M3: notices never show the PC's address, port, a link or a path", () => {
+  assert.equal(noticeText("connect ECONNREFUSED 100.98.10.32:8443", 502), "connect ECONNREFUSED");
+  assert.equal(noticeText("Render farm unreachable: connect ETIMEDOUT desktop-8ge9o3g.tail495db5.ts.net:8443", 502), "Render farm unreachable: connect ETIMEDOUT");
+  assert.equal(noticeText("upstream http://127.0.0.1:8791/jobs failed", 502), "upstream");
+  assert.equal(noticeText("Not re-queued: already queued", 409), "Not re-queued: already queued");
+  assert.equal(noticeText(undefined, 500), "That did not work (HTTP 500). Try again in a minute.");
+  assert.equal(noticeText({ x: 1 }, 400), "That did not work (HTTP 400). Try again in a minute.");
+  assert.equal(noticeText("/opt/apps/x failed", 500), "That did not work (HTTP 500). Try again in a minute.");
+});
+
+// source checks: the fixed lines are where the error starts, and the page prints no raw error
+const src = (f) => readFileSync(new URL(`../${f}`, import.meta.url), "utf8");
+const code = (f) => src(f).split("\n").filter((l) => !/^\s*(\/\/|\*|\/\*)/.test(l)).join("\n");
+ok("M3: API answers carry fixed lines; the real error is logged on the server only", () => {
+  const farm = src("lib/renderfarm.ts"), pr = src("app/api/renderfarm/premiere/route.ts"), media = src("app/api/renderfarm/media/route.ts");
+  assert.ok(!/error:\s*`[^`]*\$\{e\.message\}/.test(farm) && farm.includes('error: "The render PC is not answering"') && farm.includes("console.error("));
+  assert.ok(!/error:\s*`[^`]*\$\{e instanceof Error/.test(pr) && pr.includes('error: "The Premiere list is not answering"') && pr.includes("console.error("));
+  assert.ok(!/error:\s*String\(\(e as Error\)\.message/.test(media) && !/error: state\.error,/.test(media));
+});
+ok("M3 + L4: the page shows no raw server error, no em dash and no 'farm owner'", () => {
+  for (const f of ["app/renderfarm/page.tsx", "app/renderfarm/PremiereQueue.tsx"]) {
+    const c = code(f);
+    assert.ok(!/console\.\w+\([^)]*body\.error/.test(c), `${f}: console prints body.error`);
+    assert.ok(!/text:\s*body\.error\s*\|\|/.test(c) && !/\{media\.error\}|\? media\.error :/.test(c), `${f}: raw error on screen`);
+    assert.ok(!c.includes("\u2014"), `${f}: em dash on screen`);
+    assert.ok(!/farm owner/.test(c), f);
+    assert.ok(!/href=\{c\.notionUrl\}|href=\{cardUrl\}/.test(c), `${f}: unchecked card link`);
+  }
+});
+ok("L2: the top line does not wait forever on the Premiere list", () => {
+  const c = code("app/renderfarm/page.tsx");
+  assert.ok(/data && \(pjobs \|\| pDown\)/.test(c) && c.includes("Premiere list not answering"));
+  assert.deepEqual(farmCounts({ queue: [{ name: "A" }], failed: [{}] }, []), { needDecision: 0, failed: 1, onHold: 0, nextUp: "A" });
 });
 
 if (process.argv[3]) {
