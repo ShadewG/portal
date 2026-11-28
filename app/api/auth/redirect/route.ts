@@ -147,6 +147,13 @@ export async function GET(req: NextRequest) {
     });
   }
 
+  if (app.signInOff) {
+    return new Response(`${app.name} sign-in through Portal is not switched on yet. Use the link you had before.`, {
+      status: 503,
+      headers: { "Content-Type": "text/plain; charset=utf-8", "Cache-Control": "no-store" },
+    });
+  }
+
   // Server members only (lib/apps.ts requireGuildMember, learn): admins skip; Discord asked server-side, fail closed
   if (app.requireGuildMember && !isAdmin) {
     const check = await teamMember(discordId);

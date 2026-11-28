@@ -11,6 +11,9 @@ export interface AppConfig {
    *  Not a member: "for the team" page. Discord cannot be asked: "try again" page (fail closed). */
   requireGuildMember?: boolean;
   requireExplicitGrant?: boolean;
+  /** Grants and the tile exist, but Portal does not hand off yet (the app's own Portal sign-in is not live). The
+   *  redirect answers a plain "not switched on yet" page and signs no token. Switch on = delete the line. */
+  signInOff?: boolean;
   allowedDiscordId?: string;
   allowedOrigins?: string[];
   icon: string;
@@ -164,6 +167,21 @@ export const sections: AppSection[] = [
         icon: "C",
         color: "#0f766e",
         status: "live",
+      },
+      {
+        // Samuel, 28 Nov 2026 (Plan: Cases decision 3): the KPI page goes behind Portal sign-in. Grants (Ed, Chris)
+        // plus Portal admins, like other apps. The KPI side (a copy of the Pulse gate) is built by Plan: Cases;
+        // until it is live, signInOff keeps Portal from handing off. Then delete signInOff and set status "live".
+        id: "kpi",
+        name: "KPI",
+        description: "Monthly KPI dashboard: cases, production and finance numbers.",
+        url: "https://kpi.insanity.team",
+        handoffPath: "/auth/portal",
+        signInOff: true,
+        allowedOrigins: ["https://kpi.insanity.team"],
+        icon: "%",
+        color: "#6366f1",
+        status: "dev",
       },
     ],
   },

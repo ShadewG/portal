@@ -38,6 +38,7 @@ const OWNER_ONLY = new Set([CASES_DASHBOARD_APP_ID, "pulse.hiring", "pulse.serve
 
 function appEffect(app: AppConfig): GrantEffect {
   if (app.requiresPortalAuth === false) return "tile-only";
+  if (app.signInOff) return "none";
   if (app.allowAnyAuthenticatedUser || app.id === CASES_DASHBOARD_APP_ID) return "none";
   return CHECKED_EVERY_CLICK.has(app.id) ? "now" : "next-sign-in";
 }
@@ -52,7 +53,8 @@ const appGrants: GrantDef[] = allApps.map((app) => ({
   effect: appEffect(app),
   note: app.requiresPortalAuth === false ? "No Portal gate: the grant only shows the tile."
     : app.allowAnyAuthenticatedUser ? "Open to everyone signed in: the toggle changes nothing."
-    : app.id === CASES_DASHBOARD_APP_ID ? "Decided by the owner's own list (lib/casesAccess.ts), not this toggle." : undefined,
+    : app.id === CASES_DASHBOARD_APP_ID ? "Decided by the owner's own list (lib/casesAccess.ts), not this toggle."
+    : app.signInOff ? "Portal sign-in for this app is not switched on yet." : undefined,
 }));
 
 // Known tabs and areas (inventory/apps.md, 23 Nov 2026). Add one line per tab; the parent must be an app id above.
