@@ -50,10 +50,67 @@ ok("a member with and without a team role");
 assert.deepEqual(await teamMember(id(), reply(404, { message: "Unknown Member", code: 10007 }), t), { known: true, member: false, team: false, name: null });
 ok("not on the server: not the team");
 assert.deepEqual(await teamMember(id(), reply(404, { message: "Unknown Guild", code: 10004 }), t), { known: false });
-assert.deepEqual(await teamMember(id(), reply(429, { retry_after: 1 }), t), { known: false });
 assert.deepEqual(await teamMember(id(), reply(500, {}), t), { known: false });
 assert.deepEqual(await teamMember(id(), async () => { throw new Error("timeout"); }, t), { known: false });
+assert.deepEqual(await teamMember(id(), reply(429, { retry_after: 1 }), t), { known: false });
 ok("an answer that is not about the person (bot removed, rate limit, outage) decides nothing");
+t += 3_600_000;   // past every wait above
+
+// review S6: back-off. Counting fetchers; time moves by hand.
+{
+  let n = 0;
+  const say = (status, body, headers = {}) => async () => { n++; return new Response(JSON.stringify(body), { status, headers: { "content-type": "application/json", ...headers } }); };
+  // 429: honour retry_after for everyone, and the person who clicked gets "try again" from memory for at least 30 s
+  const a = id(), b = id();
+  await teamMember(a, say(429, { retry_after: 45, global: false }), t);
+  assert.equal(n, 1);
+  assert.deepEqual(await teamMember(a, say(200, { roles: [EDITOR] }), t + 10_000), { known: false });
+  assert.deepEqual(await teamMember(b, say(200, { roles: [EDITOR] }), t + 44_000), { known: false });
+  assert.equal(n, 1, "nobody is asked during retry_after");
+  assert.equal((await teamMember(b, say(200, { roles: [EDITOR] }), t + 46_000)).known, false, "b remembered its unknown for 30 s");
+  assert.equal(n, 1);
+  assert.equal((await teamMember(id(), say(200, { roles: [EDITOR] }), t + 46_000)).team, true, "after retry_after Discord is asked again");
+  assert.equal(n, 2);
+  ok("429: retry_after honoured for every id, no call while waiting");
+  // Retry-After header when the body has none; a short wait still remembers the person 30 s
+  t += 3_600_000; n = 0;
+  const c = id();
+  await teamMember(c, say(429, {}, { "retry-after": "2" }), t);
+  assert.equal((await teamMember(id(), say(200, { roles: [] }), t + 2_500)).known, true, "header wait over after 2 s");
+  assert.equal((await teamMember(c, say(200, { roles: [] }), t + 20_000)).known, false, "the 429 person: 30 s memory");
+  assert.equal((await teamMember(c, say(200, { roles: [] }), t + 30_001)).known, true);
+  assert.equal(n, 3);
+  ok("429: Retry-After header read; at least 30 s per person");
+  // 5xx and timeout: 15 s
+  t += 3_600_000; n = 0;
+  const d = id(), e = id();
+  await teamMember(d, say(502, {}), t);
+  await teamMember(e, async () => { n++; throw new Error("timeout"); }, t);
+  assert.equal((await teamMember(d, say(200, { roles: [] }), t + 14_000)).known, false);
+  assert.equal((await teamMember(e, say(200, { roles: [] }), t + 14_000)).known, false);
+  assert.equal(n, 2, "no call inside 15 s");
+  assert.equal((await teamMember(d, say(200, { roles: [] }), t + 15_001)).known, true);
+  assert.equal((await teamMember(e, say(200, { roles: [] }), t + 15_001)).known, true);
+  assert.equal(n, 4);
+  ok("5xx and timeout: unknown remembered 15 s, then asked again");
+  // other errors (401/403, unknown guild): 30 s
+  t += 3_600_000; n = 0;
+  const f = id();
+  await teamMember(f, say(403, { code: 50001 }), t);
+  assert.equal((await teamMember(f, say(200, { roles: [] }), t + 29_000)).known, false);
+  assert.equal(n, 1);
+  ok("401/403 and other errors: unknown remembered 30 s");
+  // not a member: 60 s, then a fresh look (someone who just joined gets in)
+  t += 3_600_000; n = 0;
+  const g = id();
+  assert.equal((await teamMember(g, say(404, { code: 10007 }), t)).member, false);
+  assert.equal((await teamMember(g, say(200, { roles: [] }), t + 59_000)).member, false);
+  assert.equal(n, 1);
+  assert.equal((await teamMember(g, say(200, { roles: [] }), t + 60_001)).member, true);
+  assert.equal(n, 2);
+  ok("not a member remembered 60 s, then the join is seen");
+}
+t += 3_600_000;
 assert.deepEqual(await teamMember("demo-tutorial", reply(200, {}), t), { known: false });
 assert.deepEqual(await teamMember("qa-detect-x", reply(200, {}), t), { known: false });
 ok("demo and QA identities are never looked up");
