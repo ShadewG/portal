@@ -39,8 +39,15 @@ export const AUTO_GRANT = "auto:discord-team";
 const SNOWFLAKE = /^\d{15,22}$/;
 const UNKNOWN_MEMBER = 10007;   // Discord's error code for "not a member of this server" (10004 would be the server itself)
 
-/** known: false — Discord could not be asked (no token, timeout, rate limit, an error): nothing is changed on that. */
-export type TeamCheck = { known: true; team: boolean; name: string | null; avatar?: string | null } | { known: false };
+/** known: false: Discord could not be asked (no token, timeout, rate limit, an error): nothing is changed on that.
+ *  member: on the server at all (any roles or none); team: on the server with a team role (Desk rule). */
+export type TeamCheck = { known: true; member: boolean; team: boolean; name: string | null; avatar?: string | null } | { known: false };
+
+/** Discord API base. Only a loopback override is honoured (the test copy's stub, X4a); anything else = Discord. */
+function discordApi(): string {
+  const o = process.env.DISCORD_API_BASE ?? "";
+  return /^http:\/\/127\.0\.0\.1:\d{2,5}$/.test(o) ? o : "https://discord.com/api/v10";
+}
 
 export interface Member { roles?: unknown; nick?: string | null; user?: { bot?: boolean; global_name?: string | null; username?: string; avatar?: string | null } }
 
@@ -63,37 +70,64 @@ export function memberAvatar(m: Member | null | undefined): string | null {
   return /^(a_)?[0-9a-f]{32}$/.test(h) ? h : null;
 }
 
-const cache = new Map<string, { at: number; result: TeamCheck }>();
-const TTL_MS = 5 * 60_000;
+// Answer memory (review S6, 28 Nov 2026). The bot token is shared with Desk's team sync (same rate-limit bucket), so
+// Portal never asks again while an answer is fresh, and never asks at all while Discord said to wait:
+//  - on the server: 5 minutes (as before);
+//  - not on the server: 60 s, so someone who just joined gets in about a minute after doing what the page says;
+//  - Discord could not answer: 429 = wait retry_after (at least 30 s for this person, and nobody is asked again until
+//    it is over: "global" or not, one bucket is enough to back off); 5xx or timeout = 15 s; any other error = 30 s.
+//    "Try again" answers from memory meanwhile, so clicks never reach Discord.
+const cache = new Map<string, { until: number; result: TeamCheck }>();
+const MEMBER_MS = 5 * 60_000;
+const NOT_MEMBER_MS = 60_000;
+const DOWN_MS = 15_000;
+const ERROR_MS = 30_000;
+const MAX_WAIT_MS = 10 * 60_000;
+let waitUntil = 0;    // after a 429: no call to Discord before this time
 
-/** Is this Discord account on the team right now? Asked of Discord with the bot token; a known answer is kept 5 minutes. */
+function remember(discordId: string, result: TeamCheck, ms: number, now: number): TeamCheck {
+  cache.set(discordId, { until: now + ms, result });
+  if (cache.size > 2000) cache.delete(cache.keys().next().value as string);
+  return result;
+}
+
+/** Seconds Discord asked us to wait (body retry_after, else the Retry-After header), as ms, capped; 5 s if unreadable. */
+async function retryAfterMs(r: Response): Promise<number> {
+  const body = (await r.json().catch(() => null)) as { retry_after?: unknown } | null;
+  const s = Number(body?.retry_after ?? r.headers.get("retry-after"));
+  return Math.min(MAX_WAIT_MS, Number.isFinite(s) && s > 0 ? Math.ceil(s * 1000) : 5000);
+}
+
+/** Is this Discord account on the team right now? Asked of Discord with the bot token; answers are remembered (above). */
 export async function teamMember(discordId: string, fetcher: typeof fetch = fetch, now = Date.now()): Promise<TeamCheck> {
   if (!SNOWFLAKE.test(discordId)) return { known: false };           // demo / QA identities are never Discord members
   const token = process.env.DISCORD_TEAM_BOT_TOKEN;
   if (!token) return { known: false };
   const hit = cache.get(discordId);
-  if (hit && now - hit.at < TTL_MS) return hit.result;
-  let result: TeamCheck;
+  if (hit && now < hit.until) return hit.result;
+  const unknown: TeamCheck = { known: false };
+  if (now < waitUntil) return remember(discordId, unknown, Math.max(ERROR_MS, waitUntil - now), now);
   try {
-    const r = await fetcher(`https://discord.com/api/v10/guilds/${TEAM_GUILD_ID}/members/${discordId}`, {
+    const r = await fetcher(`${discordApi()}/guilds/${TEAM_GUILD_ID}/members/${discordId}`, {
       headers: { Authorization: `Bot ${token}` },
       cache: "no-store",
       signal: AbortSignal.timeout(6000),
     });
     if (r.status === 404) {
       const body = (await r.json().catch(() => null)) as { code?: number } | null;
-      if (body?.code !== UNKNOWN_MEMBER) return { known: false };     // the server or the route is gone: decide nothing
-      result = { known: true, team: false, name: null };
-    } else if (!r.ok) {
-      return { known: false };
-    } else {
-      const m = (await r.json()) as Member;
-      result = { known: true, team: isTeamMember(m), name: memberName(m), avatar: memberAvatar(m) };
+      if (body?.code !== UNKNOWN_MEMBER) return remember(discordId, unknown, ERROR_MS, now);   // the server or the route is gone: decide nothing
+      return remember(discordId, { known: true, member: false, team: false, name: null }, NOT_MEMBER_MS, now);
     }
+    if (r.status === 429) {
+      const wait = await retryAfterMs(r);
+      waitUntil = Math.max(waitUntil, now + wait);
+      return remember(discordId, unknown, Math.max(ERROR_MS, wait), now);
+    }
+    if (r.status >= 500) return remember(discordId, unknown, DOWN_MS, now);
+    if (!r.ok) return remember(discordId, unknown, ERROR_MS, now);
+    const m = (await r.json()) as Member;
+    return remember(discordId, { known: true, member: !m?.user?.bot, team: isTeamMember(m), name: memberName(m), avatar: memberAvatar(m) }, MEMBER_MS, now);
   } catch {
-    return { known: false };
+    return remember(discordId, unknown, DOWN_MS, now);               // timeout or network
   }
-  cache.set(discordId, { at: now, result });
-  if (cache.size > 2000) cache.delete(cache.keys().next().value as string);
-  return result;
 }
