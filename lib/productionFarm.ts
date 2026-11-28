@@ -70,7 +70,10 @@ export function productionMgx(forDiscordId: string, body: unknown): Promise<Prod
       },
     );
     req.on("timeout", () => req.destroy(new Error("timed out")));
-    req.on("error", (e) => resolve({ status: 502, body: { error: `Production unreachable: ${e.message}` } }));
+    req.on("error", (e) => {
+      console.error("[renderfarm] Production unreachable:", e.message); // detail stays in the server log
+      resolve({ status: 502, body: { error: "Production is not answering. Try again in a minute." } });
+    });
     req.write(payload);
     req.end();
   });
