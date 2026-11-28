@@ -7,7 +7,7 @@
 //   cd <release dir> && node --experimental-strip-types --no-warnings tools/x3_seed.mjs            # dry run (default)
 //   cd <release dir> && node --experimental-strip-types --no-warnings tools/x3_seed.mjs --apply    # write
 //
-// Reads DATABASE_URL and ADMIN_DISCORD_ID from the release .env. Prints usernames, grant ids and change ids only
+// Reads DATABASE_URL and ADMIN_DISCORD_ID from the env file (--env <file>, default <repo>/.env). Prints usernames, grant ids and change ids only
 // (no emails, no env values). Undo: /access audit log (Undo on each change) or tools/x3_seed.mjs --undo <changeId>.
 import { registerHooks } from "node:module";
 import { existsSync } from "node:fs";
@@ -29,8 +29,10 @@ export const GRANTS = [
 const NOTE = "X3 seed: Samuel's decisions 28 Nov 2026 (R-3258)";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
-dotenv.config({ path: path.join(root, ".env"), quiet: true });
 const args = process.argv.slice(2);
+// --env <file>: production keeps it outside the release folder (/opt/apps/portal/.env); default <repo>/.env
+const envFile = args.includes("--env") ? args[args.indexOf("--env") + 1] : path.join(root, ".env");
+dotenv.config({ path: envFile, quiet: true });
 const apply = args.includes("--apply");
 const undoId = args.includes("--undo") ? args[args.indexOf("--undo") + 1] : null;
 const owner = process.env.ADMIN_DISCORD_ID;
