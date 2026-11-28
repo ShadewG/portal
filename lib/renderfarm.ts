@@ -59,7 +59,11 @@ export function farmRequest(method: "GET" | "POST", path: string, actor: string,
       },
     );
     req.on("timeout", () => req.destroy(new Error("timed out")));
-    req.on("error", (e) => resolve({ status: 502, body: { error: `Render farm unreachable: ${e.message}` } }));
+    // the error names the PC's address and port: logged here on the server only, the browser gets a fixed line
+    req.on("error", (e) => {
+      console.error("render farm request failed:", method, path, e.message);
+      resolve({ status: 502, body: { error: "The render PC is not answering" } });
+    });
     if (payload) req.write(payload);
     req.end();
   });

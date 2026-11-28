@@ -36,7 +36,9 @@ async function pf(method: "GET" | "POST", path: string, who: { id: string; name:
     const data = await res.json().catch(() => ({ error: `Premiere queue answered HTTP ${res.status} without JSON` }));
     return Response.json(data, { status: res.status, headers: { "Cache-Control": "no-store" } });
   } catch (e) {
-    return Response.json({ error: `Premiere queue unreachable: ${e instanceof Error ? e.message : String(e)}` }, { status: 502 });
+    // the error can name the service's address: logged on the server only, the browser gets a fixed line
+    console.error("premiere queue request failed:", method, path.split("?")[0], e instanceof Error ? e.message : String(e));
+    return Response.json({ error: "The Premiere list is not answering" }, { status: 502 });
   }
 }
 

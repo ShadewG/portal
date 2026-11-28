@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties, type KeyboardEvent } from "react";
-import { fmtWhen, premiereLine, PREMIERE_DONE as DONE } from "@/lib/renderfarmView";
+import { fmtWhen, noticeText, premiereLine, PREMIERE_DONE as DONE } from "@/lib/renderfarmView";
 
 /**
  * Premiere renders queue (owner, 16 Nov 2026): queue Premiere projects by name, change the order freely, and let the
@@ -96,8 +96,8 @@ function progressText(j: PJob): string {
   return "";
 }
 
-/** onJobs: every fresh job list, for the page's top line. */
-export default function PremiereQueue({ onJobs }: { onJobs?: (jobs: PJob[]) => void } = {}) {
+/** onJobs: every fresh job list, for the page's top line; onDown: whether the list is not answering right now. */
+export default function PremiereQueue({ onJobs, onDown }: { onJobs?: (jobs: PJob[]) => void; onDown?: (down: boolean) => void } = {}) {
   const [data, setData] = useState<Data | null>(null);
   const [jobs, setJobs] = useState<PJob[]>([]);
   const [error, setError] = useState<string | null>(null);
@@ -131,18 +131,21 @@ export default function PremiereQueue({ onJobs }: { onJobs?: (jobs: PJob[]) => v
       const res = await fetch("/api/renderfarm/premiere?op=jobs", { cache: "no-store" });
       const body = (await res.json().catch(() => ({}))) as Data;
       if (!res.ok) {
-        console.warn("premiere queue:", res.status, body.error);
+        console.warn("premiere queue: list answer", res.status);
+        onDown?.(true);
         return setError(PF_DOWN);
       }
       if (dragging.current || Date.now() < pendingOrder.current) return;
       setData(body);
       setJobs(body.jobs);
       onJobs?.(body.jobs);
+      onDown?.(false);
       setError(null);
     } catch {
+      onDown?.(true);
       setError(PF_DOWN);
     }
-  }, [onJobs]);
+  }, [onJobs, onDown]);
 
   useEffect(() => {
     void load();
@@ -164,7 +167,7 @@ export default function PremiereQueue({ onJobs }: { onJobs?: (jobs: PJob[]) => v
       try {
         const res = await fetch(`/api/renderfarm/premiere?op=search&q=${encodeURIComponent(term)}`, { signal: ctl.signal, cache: "no-store" });
         const body = (await res.json()) as { results?: Found[]; error?: string };
-        if (!res.ok) setNotice({ ok: false, text: body.error || `Search failed (HTTP ${res.status})` });
+        if (!res.ok) setNotice({ ok: false, text: `Search failed: ${noticeText(body.error, res.status)}` });
         else setFound(body.results || []);
       } catch {
         /* aborted or offline */
@@ -190,7 +193,7 @@ export default function PremiereQueue({ onJobs }: { onJobs?: (jobs: PJob[]) => v
       const res = await fetch("/api/renderfarm/premiere", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload) });
       const body = (await res.json().catch(() => ({}))) as { error?: string; added?: string[]; skipped?: { project: string; why: string }[] };
       if (!res.ok) {
-        setNotice({ ok: false, text: body.error || `HTTP ${res.status}` });
+        setNotice({ ok: false, text: noticeText(body.error, res.status) });
         return false;
       }
       if (body.added) {
@@ -298,7 +301,7 @@ export default function PremiereQueue({ onJobs }: { onJobs?: (jobs: PJob[]) => v
               autoFocus
               value={q}
               onChange={(e) => setQ(e.target.value)}
-              placeholder="Search Premiere projects by name — IB57, Tubi, MERGE…"
+              placeholder="Search Premiere projects by name: IB57, Tubi, MERGE…"
               style={{ ...input, flex: "1 1 260px", minWidth: 0 }}
             />
             <select value={preset} onChange={(e) => setPreset(e.target.value)} style={input} title="Export settings">

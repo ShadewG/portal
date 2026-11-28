@@ -2,7 +2,7 @@
 
 import { createElement, useCallback, useEffect, useState, type CSSProperties } from "react";
 import PremiereQueue from "./PremiereQueue";
-import { collapseActivity, failedReason, farmCounts, fmtRange, fmtWhen, parseFarmTime, reasonText, splitReason, topLine, type PremiereJobLite } from "@/lib/renderfarmView";
+import { collapseActivity, failedReason, farmCounts, fmtRange, fmtWhen, noticeText, notionHref, parseFarmTime, reasonText, splitReason, topLine, type PremiereJobLite } from "@/lib/renderfarmView";
 
 const REFRESH_MS = 5000;
 
@@ -46,6 +46,8 @@ const ASK_FOR_CONTROLS = "To start, pause or re-queue renders, ask Samuel or Aus
 /** Shown instead of the raw network error (it named the PC's address and port). */
 const FARM_DOWN = "The render PC is not answering. Premiere renders below still work.";
 const OFFLINE = "This page cannot reach the server. Check your internet connection.";
+/** The player's only error line (the server's own text could hold a path). */
+const NO_PLAY = "This render can't play right now. Try again in a minute, or open it in Review.";
 
 const STAGES: Record<string, string> = {
   starting: "Starting",
@@ -97,7 +99,7 @@ const reviewUrl = (path: string, share = false) =>
   `https://foiasorter.insanity.team/review/open?dropbox_path=${encodeURIComponent(path)}&from=renderfarm${share ? "&share=1" : ""}`;
 
 function fmtDuration(s: number | null | undefined): string {
-  if (s == null) return "—";
+  if (s == null) return "-";
   if (s < 60) return `${s}s`;
   const m = Math.floor(s / 60);
   if (m < 60) return `${m}m ${s % 60}s`;
@@ -145,6 +147,13 @@ function ReviewLinks({ path, small = false }: { path: string; small?: boolean })
   );
 }
 
+/** A card's name, linked to Notion only when the link is a Notion one (never javascript: or another site). */
+function CardName({ c }: { c: Card }) {
+  const href = notionHref(c.notionUrl);
+  const style: CSSProperties = { color: "var(--text)", wordBreak: "break-all" };
+  return href ? <a href={href} target="_blank" rel="noreferrer" style={style}>{c.name}</a> : <span style={style}>{c.name}</span>;
+}
+
 /** A farm failure in plain words; the raw farm text (paths, codes) only inside "Technical details". */
 function Reason({ text, cardUrl }: { text: string; cardUrl?: string }) {
   const { plain, details } = splitReason(text);
@@ -152,8 +161,8 @@ function Reason({ text, cardUrl }: { text: string; cardUrl?: string }) {
   if (!plain) {
     return (
       <div style={style}>
-        No reason recorded, ask the farm owner.
-        {cardUrl && <> <a href={cardUrl} target="_blank" rel="noreferrer" style={{ color: "var(--text)" }}>Open the card</a></>}
+        No reason recorded, ask Samuel or Austin.
+        {notionHref(cardUrl) && <> <a href={notionHref(cardUrl)} target="_blank" rel="noreferrer" style={{ color: "var(--text)" }}>Open the card</a></>}
       </div>
     );
   }
@@ -187,6 +196,7 @@ export default function RenderFarmPage() {
   const [now, setNow] = useState(() => Date.now());
   const [playing, setPlaying] = useState<Render | null>(null);
   const [pjobs, setPjobs] = useState<PremiereJobLite[] | null>(null);
+  const [pDown, setPDown] = useState(false);
   const closePlayer = useCallback(() => setPlaying(null), []);
 
   const load = useCallback(async () => {
@@ -195,7 +205,7 @@ export default function RenderFarmPage() {
       if (res.status === 403) return setForbidden(true);
       const body = (await res.json().catch(() => ({}))) as Live;
       if (!res.ok) {
-        console.warn("render farm:", res.status, body.error);
+        console.warn("render farm: live answer", res.status);
         setError(FARM_DOWN);
         return;
       }
@@ -224,7 +234,7 @@ export default function RenderFarmPage() {
     try {
       const res = await fetch(path, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload) });
       const body = (await res.json().catch(() => ({}))) as { message?: string; error?: string };
-      setNotice({ ok: res.ok, text: res.ok ? body.message || "Done" : body.error || `HTTP ${res.status}` });
+      setNotice({ ok: res.ok, text: res.ok ? body.message || "Done" : noticeText(body.error, res.status) });
       await load();
     } catch {
       setNotice({ ok: false, text: "Request failed" });
@@ -236,7 +246,7 @@ export default function RenderFarmPage() {
   const requeue = (c: Card) => post("/api/renderfarm/requeue", { pageId: c.pageId, kind: c.kind }, `rq:${c.pageId}:${c.kind}`);
 
   const stale = lastOk != null && now - lastOk > 30_000;
-  const state = data?.controls.state ?? "—";
+  const state = data?.controls.state ?? "Unknown";
   const cur = data?.current ?? null;
   const pct = cur?.progress?.percent ?? null;
   // Farm controls: admins + Render Farm grant (enforced by the API too). Everyone else sees the page only.
@@ -249,7 +259,8 @@ export default function RenderFarmPage() {
     const p = h.type === "DONE" ? deliveredPath(h.detail) : null;
     if (p && !renders.some((r) => r.path === p)) renders.push({ path: p, name: h.name, episode: h.episode, kind: h.kind, timestamp: h.timestamp, alpha: /\.mov$/i.test(p), by: askedBy(h, history), zone });
   }
-  const counts = data && pjobs ? farmCounts({ queue: data.queue.rows, failed: data.failed }, pjobs) : null;
+  // the Premiere list not answering must not leave the line on "Counting renders..." (After Effects counts alone)
+  const counts = data && (pjobs || pDown) ? farmCounts({ queue: data.queue.rows, failed: data.failed }, pjobs ?? []) : null;
 
   function ControlButton({ action, text, tone = "normal", guarded = false }: { action: string; text: string; tone?: "normal" | "danger" | "primary"; guarded?: boolean }) {
     const disabled = !!busy || !data?.controls.canControl;
@@ -277,7 +288,7 @@ export default function RenderFarmPage() {
         <h1 style={{ fontSize: 12, fontWeight: 700, letterSpacing: "0.15em", textTransform: "uppercase", margin: 0 }}>Render Farm</h1>
         {data && (
           <span style={{ marginLeft: "auto", fontSize: 11, color: stale || error ? "var(--red)" : "var(--text-muted)" }}>
-            {error ? `▲ ${error === FARM_DOWN ? "The render PC is not answering" : error}` : stale ? `▲ No update for ${fmtDuration(Math.round((now - (lastOk ?? now)) / 1000))}` : `Updated ${when(data.generatedAt)}`}
+            {error ? `▲ ${error === FARM_DOWN ? "The render PC is not answering" : error}` : stale ? `▲ No update for ${fmtDuration(Math.round((now - (lastOk ?? now)) / 1000))}` : `Updated ${when(data.generatedAt, zone)}`}
           </span>
         )}
       </header>
@@ -298,7 +309,7 @@ export default function RenderFarmPage() {
           </section>
         )}
         {/* The Premiere queue lives on this server: show it even when the After Effects farm can't be reached. */}
-        {!forbidden && !data && error && <PremiereQueue onJobs={setPjobs} />}
+        {!forbidden && !data && error && <PremiereQueue onJobs={setPjobs} onDown={setPDown} />}
         {playing && <Player r={playing} onClose={closePlayer} />}
 
         {data && (
@@ -308,8 +319,10 @@ export default function RenderFarmPage() {
               {/* One honest line for everyone (S11): counts from both queues. */}
               <p style={{ width: "100%", margin: 0, fontSize: 15, fontWeight: 600 }}>
                 {counts ? topLine(counts) : "Counting renders…"}
+                {counts && pDown && !pjobs && <span style={{ color: "var(--amber)" }}> · Premiere list not answering</span>}
                 {!canControl && state !== "Running" && <span style={{ color: stateTone(state) }}> · farm: {state}</span>}
               </p>
+              {counts && counts.onHold > 0 && <p style={{ width: "100%", margin: "-14px 0 0", fontSize: 11, color: "var(--text-muted)" }}>A held job counts only as on hold, also when it needs a decision or failed.</p>}
               {canControl && (
               <div style={{ minWidth: 180 }}>
                 <p style={label}>Farm</p>
@@ -319,7 +332,7 @@ export default function RenderFarmPage() {
                 </div>
                 <div style={{ fontSize: 11, color: "var(--text-dim)", marginTop: 4 }}>
                   {data.overall} · heartbeat {fmtDuration(data.heartbeatAgeSeconds)} ago
-                  {(data.heartbeatAgeSeconds ?? 0) > 120 && state === "Running" && <span style={{ color: "var(--red)" }}> — poller may be stuck</span>}
+                  {(data.heartbeatAgeSeconds ?? 0) > 120 && state === "Running" && <span style={{ color: "var(--red)" }}> · poller may be stuck</span>}
                 </div>
               </div>
               )}
@@ -386,7 +399,7 @@ export default function RenderFarmPage() {
             </section>
 
             {/* Premiere renders (premiere-farm service on this server) */}
-            <PremiereQueue onJobs={setPjobs} />
+            <PremiereQueue onJobs={setPjobs} onDown={setPDown} />
 
             {/* Recent renders: thumbnails, click to play */}
             {renders.length > 0 && (
@@ -409,7 +422,7 @@ export default function RenderFarmPage() {
                   {data.queue.rows.map((c) => (
                     <li key={`${c.pageId}:${c.kind}`} style={{ fontSize: 12, display: "flex", gap: 8 }}>
                       <span style={{ color: "var(--text-muted)", minWidth: 44 }}>{c.episode}</span>
-                      <a href={c.notionUrl} target="_blank" rel="noreferrer" style={{ color: "var(--text)", wordBreak: "break-all" }}>{c.name}</a>
+                      <CardName c={c} />
                       <span style={{ marginLeft: "auto", color: "var(--text-dim)" }}>{c.kind === "textless" ? "textless" : c.format}</span>
                     </li>
                   ))}
@@ -417,7 +430,7 @@ export default function RenderFarmPage() {
                 {data.queue.errors.map((e) => (
                   <p key={e.episode + e.error} style={{ fontSize: 11, color: "var(--amber)", margin: "8px 0 0" }}>Could not read {e.episode || "a database"}: {e.error}</p>
                 ))}
-                {data.queue.checkedAt && <p style={{ fontSize: 10, color: "var(--text-muted)", margin: "10px 0 0" }}>Notion checked {when(data.queue.checkedAt)}</p>}
+                {data.queue.checkedAt && <p style={{ fontSize: 10, color: "var(--text-muted)", margin: "10px 0 0" }}>Notion checked {when(data.queue.checkedAt, zone)}</p>}
               </section>
 
               {/* Failed */}
@@ -431,7 +444,7 @@ export default function RenderFarmPage() {
                       <li key={key} style={{ fontSize: 12, display: "grid", gap: 4 }}>
                         <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
                           <span style={{ color: "var(--text-muted)", minWidth: 44 }}>{c.episode}</span>
-                          <a href={c.notionUrl} target="_blank" rel="noreferrer" style={{ color: "var(--text)", wordBreak: "break-all" }}>{c.name}</a>
+                          <CardName c={c} />
                           {canControl && (
                             <button style={{ ...btn(), marginLeft: "auto", padding: "4px 8px" }} disabled={!!busy} onClick={() => requeue(c)}>
                               {busy === key ? "…" : "Re-queue"}
@@ -464,6 +477,11 @@ export default function RenderFarmPage() {
                               <span style={{ wordBreak: "break-all" }}>{r.name}</span> failed {r.fails} times, {fmtRange(parseFarmTime(r.from, zone), parseFarmTime(r.to, zone))}
                             </span>
                             {reasonText(r.last.detail) && <Reason text={r.last.detail} />}
+                            {r.earlier.filter((e) => splitReason(e.detail).plain).map((e, k) => (
+                              <div key={k} style={{ color: "var(--text-dim)", fontSize: 11, wordBreak: "break-word" }}>
+                                Earlier: {splitReason(e.detail).plain}{e.count > 1 ? ` (${e.count} times)` : ""}
+                              </div>
+                            ))}
                           </span>
                         </li>
                       );
@@ -510,7 +528,7 @@ export default function RenderFarmPage() {
                   return (
                     <p style={{ margin: "0 0 10px", fontSize: 12, color: days >= 7 ? "var(--amber)" : "var(--text-dim)" }}>
                       On for {days === 0 ? "less than a day" : `${days} day${days === 1 ? "" : "s"}`}
-                      {days >= 7 && " — restart the PC when nothing is rendering: crashed renders leak memory that only a restart frees"}
+                      {days >= 7 && ". Restart the PC when nothing is rendering: crashed renders leak memory that only a restart frees"}
                     </p>
                   );
                 })()}
@@ -633,8 +651,9 @@ function Player({ r, onClose }: { r: Render; onClose: () => void }) {
       try {
         const res = await fetch(`/api/renderfarm/media?path=${encodeURIComponent(r.path)}`, { cache: "no-store" });
         const body = (await res.json()) as { url?: string | null; ready?: boolean; error?: string };
+        if (body.error) body.error = NO_PLAY;
         if (!alive) return;
-        if (!res.ok) return setMedia({ error: body.error || `HTTP ${res.status}` });
+        if (!res.ok) return setMedia({ error: NO_PLAY });
         setMedia(body);
         if (!body.ready && !body.error) timer = setTimeout(ask, 3000);
       } catch {
@@ -673,7 +692,7 @@ function Player({ r, onClose }: { r: Render; onClose: () => void }) {
               <video src={media.url} controls autoPlay playsInline style={{ width: "100%", height: "100%", maxHeight: "75vh" }} />
             ) : (
               <span style={{ fontSize: 12, color: media?.error ? "var(--red)" : "var(--text-dim)", padding: 16, textAlign: "center" }}>
-                {media?.error ? media.error : r.alpha ? "Making a browser-playable copy of this alpha render (first time only, usually under a minute)…" : "Loading…"}
+                {media?.error ? NO_PLAY : r.alpha ? "Making a browser-playable copy of this alpha render (first time only, usually under a minute)…" : "Loading…"}
               </span>
             )}
           </div>
