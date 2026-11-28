@@ -10,6 +10,7 @@ import {
   type AppSection,
 } from "@/lib/apps";
 import { useState, useEffect, useCallback } from "react";
+import FeedbackButton from "./FeedbackButton";
 
 type AccessMap = Record<string, boolean>;
 
@@ -444,6 +445,8 @@ export default function Dashboard() {
           );
         })}
       </main>
+      {/* X6 S5: "This is confusing" note, signed-in people only */}
+      {user?.discordId && <FeedbackButton page="/" />}
     </div>
   );
 }

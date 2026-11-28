@@ -2,6 +2,7 @@ import { notFound } from "next/navigation";
 import { auth } from "@/auth";
 import { viewerOf } from "@/lib/accessAdmin";
 import AccessDashboard from "./AccessDashboard";
+import FeedbackButton from "../FeedbackButton";
 import "./access.css";
 
 export const dynamic = "force-dynamic";
@@ -12,5 +13,10 @@ export const metadata = { title: "ACCESS · COMMAND CENTER" };
 export default async function AccessPage() {
   const viewer = await viewerOf(await auth());
   if (!viewer) notFound();
-  return <AccessDashboard can={viewer.can} isOwner={viewer.isOwner} />;
+  return (
+    <>
+      <AccessDashboard can={viewer.can} isOwner={viewer.isOwner} />
+      <FeedbackButton page="/access" />
+    </>
+  );
 }
