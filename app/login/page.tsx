@@ -39,10 +39,12 @@ function forDesktopApprove(callbackUrl: string) {
 // Sorter, whether next is a /review page) picks a fixed line from this table. Nothing from the address is shown.
 // Any other callback keeps the default card.
 type SignInText = { title: string; line: string };
-const VIDEO_REVIEW: SignInText = { title: "Video Review", line: "Sign in with Discord to watch the video you were sent." };
+// Video Review (plan-vr e7-portal-login.patch, current version): a shared-video link (next = /review/a/... or
+// /review/s/...) says "watch the video you were sent"; any other Video Review link says "open Video Review".
+const VIDEO_REVIEW_VIDEO: SignInText = { title: "Video Review", line: "Sign in with Discord to watch the video you were sent." };
+const VIDEO_REVIEW_APP: SignInText = { title: "Video Review", line: "Sign in with Discord to open Video Review." };
+const VIDEO_REVIEW_APPS = new Set(["video-review", "video-review-guest"]);
 const SIGNIN_TEXT: Record<string, SignInText> = {
-  "video-review": VIDEO_REVIEW,
-  "video-review-guest": VIDEO_REVIEW,
   "insanity-courses": { title: "Insanity Training", line: "Sign in with Discord to open your courses." }, // learn + /guides
 };
 function signInText(callbackUrl: string): SignInText | null {
@@ -51,7 +53,10 @@ function signInText(callbackUrl: string): SignInText | null {
     const u = new URL(callbackUrl, "https://portal.insanity.team");
     if (u.pathname !== "/api/auth/redirect") return null;
     const app = u.searchParams.get("app") || "";
-    if (app === "foia-sorter" && (u.searchParams.get("next") || "").startsWith("/review")) return VIDEO_REVIEW;
+    const next = u.searchParams.get("next") || "";
+    if (VIDEO_REVIEW_APPS.has(app) || (app === "foia-sorter" && next.startsWith("/review"))) {
+      return /^\/review\/(a|s)\//.test(next) ? VIDEO_REVIEW_VIDEO : VIDEO_REVIEW_APP;
+    }
     return Object.prototype.hasOwnProperty.call(SIGNIN_TEXT, app) ? SIGNIN_TEXT[app] : null;
   } catch {
     return null;
