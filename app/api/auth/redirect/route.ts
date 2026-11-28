@@ -7,6 +7,7 @@ import { grantedIds, handoffAllowed, permittedAppIds } from "@/lib/access";
 import { applyPendingGrants } from "@/lib/pendingAccess";
 import { portalOrigin } from "@/lib/portalOrigin";
 import { syncTeamDesk, type TeamCheck } from "@/lib/teamAccess";
+import { teamMember } from "@/lib/teamRule";
 
 function resolveReturnTo(appUrl: string, allowedOrigins: string[] | undefined, returnTo: string | null) {
   if (!returnTo) return null;
@@ -44,6 +45,29 @@ function teamOnlyPage(origin: string, username: string, team: TeamCheck | null) 
     `<a class="btn plain" href="${origin}/api/auth/signout?callbackUrl=${encodeURIComponent(again)}">Use a different Discord account</a>` +
     `<a class="btn plain" href="${origin}/">Back to Portal</a></div></main></body></html>`;
   return new Response(html, { status: 403, headers: { "Content-Type": "text/html; charset=utf-8", "Cache-Control": "no-store" } });
+}
+
+// Insanity Training (learn) is for the server (X4a, 28 Nov 2026; text: plan-training e3-signin-dryrun.md). Same look
+// as the Desk page. Not a member: 403. Discord could not be asked: 503 "try again" (fail closed for new sign-ins).
+function serverOnlyPage(origin: string, appId: string, username: string, check: TeamCheck) {
+  const again = `${origin}/api/auth/redirect?app=${encodeURIComponent(appId)}`;
+  const unsure = !check.known;
+  const text = unsure
+    ? "We couldn't check the team's Discord server just now. Wait a minute and try again."
+    : `You're signed in with the Discord account <b>${escapeHtml(username)}</b>. Insanity Training opens for everyone on the Insanity Discord server. This account isn't on it.`;
+  const html =
+    `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="robots" content="noindex"><meta name="viewport" content="width=device-width,initial-scale=1">` +
+    `<title>Insanity Training is for the team</title><style>` +
+    `body{margin:0;background:#0a0c0e;color:#eef2f5;font:15px/1.6 system-ui,-apple-system,"Segoe UI",sans-serif}main{max-width:560px;margin:0 auto;padding:12vh 22px 60px}` +
+    `.eyebrow{font:600 11px/1 ui-monospace,Consolas,monospace;letter-spacing:.16em;color:#79848e;text-transform:uppercase}h1{font-size:24px;font-weight:650;letter-spacing:-.01em;margin:10px 0 14px}` +
+    `p{color:#a7b2bc;margin:0 0 14px}b{color:#eef2f5}.row{display:flex;flex-wrap:wrap;gap:10px;margin-top:22px}a.btn{display:inline-block;padding:10px 16px;border-radius:8px;text-decoration:none;font-weight:600}` +
+    `a.primary{background:#5865f2;color:#fff}a.plain{border:1px solid #303a44;color:#eef2f5}</style></head><body><main>` +
+    `<div class="eyebrow">Insanity · Training</div><h1>${unsure ? "Please try again" : "Insanity Training is for the team"}</h1><p>${text}</p>` +
+    (unsure ? "" : `<p>On the team? Ask your lead to add you to the server, then sign in again. Signed in with the wrong account? Use a different Discord account.</p>`) +
+    `<div class="row"><a class="btn primary" href="${again}">Try again</a>` +
+    `<a class="btn plain" href="${origin}/api/auth/signout?callbackUrl=${encodeURIComponent(again)}">Use a different Discord account</a>` +
+    `<a class="btn plain" href="${origin}/">Back to Portal</a></div></main></body></html>`;
+  return new Response(html, { status: unsure ? 503 : 403, headers: { "Content-Type": "text/html; charset=utf-8", "Cache-Control": "no-store" } });
 }
 
 function buildTargetUrl(baseUrl: string, handoffPath: string | undefined, next: string | null) {
@@ -121,6 +145,12 @@ export async function GET(req: NextRequest) {
       status: 403,
       headers: { "Content-Type": "text/plain" },
     });
+  }
+
+  // Server members only (lib/apps.ts requireGuildMember, learn): admins skip; Discord asked server-side, fail closed
+  if (app.requireGuildMember && !isAdmin) {
+    const check = await teamMember(discordId);
+    if (!check.known || !check.member) return serverOnlyPage(portalOrigin(req), appId, username, check);
   }
 
   const link = await prisma.appUserLink.findUnique({

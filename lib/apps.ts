@@ -7,6 +7,9 @@ export interface AppConfig {
   handoffPath?: string;
   requiresPortalAuth?: boolean;
   allowAnyAuthenticatedUser?: boolean;
+  /** X4a (28 Nov 2026): at hand-off, non-admins must be on the Insanity Discord server (lib/teamRule.ts teamMember).
+   *  Not a member: "for the team" page. Discord cannot be asked: "try again" page (fail closed). */
+  requireGuildMember?: boolean;
   requireExplicitGrant?: boolean;
   allowedDiscordId?: string;
   allowedOrigins?: string[];
@@ -133,6 +136,8 @@ export const sections: AppSection[] = [
         url: "https://learn.insanity.team",
         handoffPath: "/api/auth/portal",
         allowAnyAuthenticatedUser: true,
+        // Samuel, 28 Nov 2026 (Plan: Training E3 fix 6): server members only. Rollback = delete this line.
+        requireGuildMember: true,
         allowedOrigins: ["https://learn.insanity.team", ...localOrigins, ...insanityOrigins],
         icon: "🎓",
         color: "#37c2a0",

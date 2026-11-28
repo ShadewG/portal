@@ -39,8 +39,15 @@ export const AUTO_GRANT = "auto:discord-team";
 const SNOWFLAKE = /^\d{15,22}$/;
 const UNKNOWN_MEMBER = 10007;   // Discord's error code for "not a member of this server" (10004 would be the server itself)
 
-/** known: false — Discord could not be asked (no token, timeout, rate limit, an error): nothing is changed on that. */
-export type TeamCheck = { known: true; team: boolean; name: string | null; avatar?: string | null } | { known: false };
+/** known: false: Discord could not be asked (no token, timeout, rate limit, an error): nothing is changed on that.
+ *  member: on the server at all (any roles or none); team: on the server with a team role (Desk rule). */
+export type TeamCheck = { known: true; member: boolean; team: boolean; name: string | null; avatar?: string | null } | { known: false };
+
+/** Discord API base. Only a loopback override is honoured (the test copy's stub, X4a); anything else = Discord. */
+function discordApi(): string {
+  const o = process.env.DISCORD_API_BASE ?? "";
+  return /^http:\/\/127\.0\.0\.1:\d{2,5}$/.test(o) ? o : "https://discord.com/api/v10";
+}
 
 export interface Member { roles?: unknown; nick?: string | null; user?: { bot?: boolean; global_name?: string | null; username?: string; avatar?: string | null } }
 
@@ -75,7 +82,7 @@ export async function teamMember(discordId: string, fetcher: typeof fetch = fetc
   if (hit && now - hit.at < TTL_MS) return hit.result;
   let result: TeamCheck;
   try {
-    const r = await fetcher(`https://discord.com/api/v10/guilds/${TEAM_GUILD_ID}/members/${discordId}`, {
+    const r = await fetcher(`${discordApi()}/guilds/${TEAM_GUILD_ID}/members/${discordId}`, {
       headers: { Authorization: `Bot ${token}` },
       cache: "no-store",
       signal: AbortSignal.timeout(6000),
@@ -83,12 +90,12 @@ export async function teamMember(discordId: string, fetcher: typeof fetch = fetc
     if (r.status === 404) {
       const body = (await r.json().catch(() => null)) as { code?: number } | null;
       if (body?.code !== UNKNOWN_MEMBER) return { known: false };     // the server or the route is gone: decide nothing
-      result = { known: true, team: false, name: null };
+      result = { known: true, member: false, team: false, name: null };
     } else if (!r.ok) {
       return { known: false };
     } else {
       const m = (await r.json()) as Member;
-      result = { known: true, team: isTeamMember(m), name: memberName(m), avatar: memberAvatar(m) };
+      result = { known: true, member: !m?.user?.bot, team: isTeamMember(m), name: memberName(m), avatar: memberAvatar(m) };
     }
   } catch {
     return { known: false };

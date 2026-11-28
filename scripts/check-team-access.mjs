@@ -43,11 +43,11 @@ const reply = (status, body) => async (url, init) => {
 let t = 1_000_000;
 const id = () => String(100000000000000000n + BigInt(++t));
 const HASH = "0123456789abcdef0123456789abcdef";
-assert.deepEqual(await teamMember(id(), reply(200, { roles: [EDITOR], nick: "Kea", user: { username: "k3aloha", avatar: HASH } }), t), { known: true, team: true, name: "Kea", avatar: HASH });
-assert.deepEqual(await teamMember(id(), reply(200, { roles: [DUBBERS], user: { username: "x", avatar: "../evil" } }), t), { known: true, team: false, name: "x", avatar: null });
+assert.deepEqual(await teamMember(id(), reply(200, { roles: [EDITOR], nick: "Kea", user: { username: "k3aloha", avatar: HASH } }), t), { known: true, member: true, team: true, name: "Kea", avatar: HASH });
+assert.deepEqual(await teamMember(id(), reply(200, { roles: [DUBBERS], user: { username: "x", avatar: "../evil" } }), t), { known: true, member: true, team: false, name: "x", avatar: null });
 ok("the current Discord picture comes back with the answer (a hash only)");
 ok("a member with and without a team role");
-assert.deepEqual(await teamMember(id(), reply(404, { message: "Unknown Member", code: 10007 }), t), { known: true, team: false, name: null });
+assert.deepEqual(await teamMember(id(), reply(404, { message: "Unknown Member", code: 10007 }), t), { known: true, member: false, team: false, name: null });
 ok("not on the server: not the team");
 assert.deepEqual(await teamMember(id(), reply(404, { message: "Unknown Guild", code: 10004 }), t), { known: false });
 assert.deepEqual(await teamMember(id(), reply(429, { retry_after: 1 }), t), { known: false });
@@ -68,6 +68,23 @@ assert.equal(calls, 1);
 assert.equal((await teamMember(someone, counting([]), t + 5 * 60_000 + 1)).team, false);
 assert.equal(calls, 2);
 ok("five-minute memory, then the role taken away is seen");
+
+// X4a: server member with no roles at all = member, not team; a bot is not a member
+assert.deepEqual(await teamMember(id(), reply(200, { roles: [], user: { username: "m" } }), t), { known: true, member: true, team: false, name: "m", avatar: null });
+assert.equal((await teamMember(id(), reply(200, { roles: [EDITOR], user: { bot: true, username: "b" } }), t)).member, false);
+ok("member flag: on the server with or without roles; bots are not members");
+
+// DISCORD_API_BASE: only a loopback stub is honoured (test copy), anything else still goes to Discord
+const seen = [];
+const echo = async (url) => { seen.push(String(url)); return new Response(JSON.stringify({ roles: [] }), { status: 200 }); };
+process.env.DISCORD_API_BASE = "https://evil.example";
+await teamMember(id(), echo, t);
+process.env.DISCORD_API_BASE = "http://127.0.0.1:3911";
+await teamMember(id(), echo, t);
+delete process.env.DISCORD_API_BASE;
+assert.match(seen[0], /^https:\/\/discord\.com\/api\/v10\//);
+assert.match(seen[1], /^http:\/\/127\.0\.0\.1:3911\/guilds\//);
+ok("API base override: loopback only");
 
 delete process.env.DISCORD_TEAM_BOT_TOKEN;
 assert.deepEqual(await teamMember(id(), reply(200, { roles: [EDITOR] }), t), { known: false });
