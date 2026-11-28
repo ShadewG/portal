@@ -20,7 +20,7 @@ import { PrismaPg } from "@prisma/adapter-pg";
 
 export const ACCESS_ADMINS = [
   { discordId: "1033050881798709378", username: "ayoub_prods" },
-  { discordId: "186424377993068544", username: "atomboy7" },
+  { discordId: "186424377993068544", username: "atomboy7" }, // gitleaks:allow (public Discord user id, not a secret)
 ];
 export const GRANTS = [
   { discordId: "1518756884453003406", username: "ed044426", grantId: "kpi" },
