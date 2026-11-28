@@ -4,7 +4,8 @@ import { prisma } from "@/lib/db";
 import { auth } from "@/auth";
 import { portalOrigin } from "@/lib/portalOrigin";
 import { grantAllowed, isOwner, type AccessContext } from "@/lib/access";
-import { grantCatalog, getGrant, isKnownGrant } from "@/lib/grants";
+import { grantCatalog, fullLabel, getGrant, isKnownGrant } from "@/lib/grants";
+import { nameBook, realName } from "@/lib/peopleNames";
 import {
   ACCESS_ADMIN_GRANT, AccessChangeError, accessErrorStatus, accessLevelOf, checkBatchShape, targetRefusal,
   type Actor, type Level,
@@ -198,6 +199,7 @@ export async function dryRun(viewer: Viewer, items: StagedItem[]) {
 
 export async function peopleFor(viewer: Viewer) {
   const users = await prisma.user.findMany({ include: { access: true }, orderBy: { username: "asc" } });
+  const book = await nameBook();
   return users.map((u) => {
     const rows: Record<string, { on: boolean; auto: boolean }> = {};
     for (const a of u.access) {
@@ -210,6 +212,7 @@ export async function peopleFor(viewer: Viewer) {
     return {
       id: publicId(viewer, u.id),
       username: u.username,
+      name: realName(book, u),
       avatarUrl: avatarUrl(viewer, u.discordId, u.avatar),
       isOwner: isOwner(u.discordId),
       isAdmin: u.isAdmin || isOwner(u.discordId),
@@ -242,7 +245,7 @@ export async function pendingList(viewer: Viewer) {
     else if (user) status = "waiting for re-sign-in";
     else status = "waiting for first sign-in";
     return {
-      id: r.id, email: viewer.isOwner ? r.email : maskEmail(r.email), grantId: r.appId, grantLabel: getGrant(r.appId)?.label ?? r.appId, granted: r.granted,
+      id: r.id, email: viewer.isOwner ? r.email : maskEmail(r.email), grantId: r.appId, grantLabel: grantLabel(r.appId), granted: r.granted,
       status, createdAt: r.createdAt, resolvedAt: r.resolvedAt,
       person: r.resolvedUserId ? nameOfId.get(r.resolvedUserId) ?? null : user?.username ?? null,
       by: r.grantedBy ? names.get(r.grantedBy) ?? "someone" : null,
@@ -261,7 +264,8 @@ async function namesForDiscordIds(ids: string[]): Promise<Map<string, string>> {
 
 export function grantLabel(id: string): string {
   if (id === ACCESS_ADMIN_GRANT) return "Access admin";
-  return getGrant(id)?.label ?? id;
+  const g = getGrant(id);
+  return g ? fullLabel(g) : id;
 }
 
 /** Changes newest first, grouped by change id. Filters: person (Portal user id), actor (Portal user id). */

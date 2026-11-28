@@ -190,6 +190,8 @@ export default function Dashboard() {
   const { data: session } = useSession();
   const [access, setAccess] = useState<AccessMap>({});
   const [isAdmin, setIsAdmin] = useState(false);
+  // /access link (B4): shown to whoever may open the Access page (owner, access admins, Portal admins read only)
+  const [accessCan, setAccessCan] = useState<"manage" | "read" | null>(null);
   const [loaded, setLoaded] = useState(false);
 
   const user = session?.user as
@@ -209,6 +211,8 @@ export default function Dashboard() {
         const data = await res.json();
         setAccess(data.access ?? {});
         setIsAdmin(data.isAdmin ?? false);
+        const who = await fetch("/api/access/me").then((r) => (r.ok ? r.json() : null)).catch(() => null);
+        setAccessCan(who?.can === "manage" || who?.can === "read" ? who.can : null);
       } else {
         console.error("[portal] /api/me failed:", res.status, await res.text().catch(() => ""));
       }
@@ -309,6 +313,26 @@ export default function Dashboard() {
               }}
             >
               Status
+            </a>
+          )}
+          {accessCan && (
+            <a
+              href="/access"
+              title={accessCan === "manage" ? "Give and remove access" : "See who has what (read only)"}
+              style={{
+                fontSize: 10,
+                fontWeight: 600,
+                letterSpacing: "0.1em",
+                textTransform: "uppercase",
+                padding: "5px 10px",
+                background: "transparent",
+                border: "1px solid var(--amber)",
+                color: "var(--amber)",
+                textDecoration: "none",
+                fontFamily: "inherit",
+              }}
+            >
+              Access
             </a>
           )}
           {isAdmin && (

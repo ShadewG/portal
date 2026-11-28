@@ -9,13 +9,20 @@ import { sections } from "@/lib/apps";
  */
 
 type Can = "manage" | "read";
-interface Grant { id: string; label: string; app: string; kind: "app" | "tab"; enforced: boolean; note: string | null }
+type Effect = "now" | "next-sign-in" | "tile-only" | "none";
+interface Grant {
+  id: string; label: string; full: string; app: string; kind: "app" | "tab"; enforced: boolean;
+  ownerOnly: boolean; effect: Effect; note: string | null;
+}
 interface Person {
-  id: string; username: string; avatarUrl: string | null; isOwner: boolean; isAdmin: boolean; isAccessAdmin: boolean;
+  id: string; username: string; name: string | null; avatarUrl: string | null; isOwner: boolean; isAdmin: boolean; isAccessAdmin: boolean;
   isYou: boolean; rows: Record<string, { on: boolean; auto: boolean }>; sees: string[]; lockedReason: string | null;
 }
 interface Preset { id: string; name: string; description: string | null; grantIds: string[]; by: string | null; updatedAt: string }
-interface State { viewer: { can: Can; isOwner: boolean; name: string | null }; catalog: Grant[]; baseline: string[]; people: Person[]; presets: Preset[] }
+interface State {
+  viewer: { can: Can; isOwner: boolean; name: string | null }; catalog: Grant[]; pulseIncluded: string[];
+  baseline: string[]; people: Person[]; presets: Preset[];
+}
 interface AuditRow { person: string; personId: string | null; grantId: string; grant: string; from: string; to: string }
 interface Change {
   changeId: string; at: string; by: string; note: string | null; isUndo: boolean; undoOfAt: string | null;
@@ -33,7 +40,7 @@ type Staged = Record<string, boolean>;
 type Tab = "people" | "matrix" | "audit" | "pending" | "presets" | "admins";
 const TABS: { id: Tab; label: string }[] = [
   { id: "people", label: "People" }, { id: "matrix", label: "Matrix" }, { id: "audit", label: "Audit log" },
-  { id: "pending", label: "Pre-grants" }, { id: "presets", label: "Presets" }, { id: "admins", label: "Access admins" },
+  { id: "pending", label: "Pre-grants" }, { id: "presets", label: "Access packs" }, { id: "admins", label: "Access admins" },
 ];
 
 /** Every write is sent as JSON (the server refuses other content types and cross-site origins). */
@@ -54,6 +61,26 @@ async function api<T>(url: string, init?: { method?: string; body?: unknown }): 
 const when = (iso: string | null) => (iso ? new Date(iso).toLocaleString(undefined, { dateStyle: "medium", timeStyle: "short" }) : "");
 const stateWord = (s: string) => (s === "on" ? "on" : s === "off" ? "off" : "not set");
 const onOff = (b: boolean) => (b ? "on" : "off");
+/** Real name (from Desk's team directory) when known, else the Discord name. */
+const nameOf = (p: { name: string | null; username: string }) => p.name ?? p.username;
+/** When a change reaches the person (B4): plain words for the badge. */
+const EFFECT_WORDS: Record<Effect, { text: string; title: string } | null> = {
+  "now": { text: "takes effect now", title: "This app asks Portal on every click." },
+  "next-sign-in": { text: "at next sign-in", title: "This app keeps its own sign-in, so a change reaches the person when they next sign in through Portal." },
+  "tile-only": { text: "tile only", title: "No Portal sign-in: this only shows or hides the tile on Home." },
+  "none": null,
+};
+/** Toggles that change nothing today are hidden (B4); they are listed read only under "Not in use yet". */
+const inUse = (g: Grant) => g.effect !== "none";
+
+function Who({ p, size = 12 }: { p: Person; size?: number }) {
+  return (
+    <span style={{ display: "block", minWidth: 0 }}>
+      <span style={{ display: "block", fontSize: size, fontWeight: 600, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{nameOf(p)}</span>
+      {p.name && <span style={{ display: "block", fontSize: Math.max(10, size - 2), color: "var(--text-muted)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>@{p.username}</span>}
+    </span>
+  );
+}
 
 /** Picture for the owner; everyone else gets no avatar URL (it carries the Discord id) and sees the initial. */
 function Avatar({ url, name, size = 24 }: { url: string | null; name: string | null; size?: number }) {
@@ -148,7 +175,7 @@ export default function AccessDashboard({ can, isOwner }: { can: Can; isOwner: b
     const needle = q.trim().toLowerCase();
     const base = new Set(state?.baseline ?? []);
     return people.filter((p) => {
-      if (needle && !p.username.toLowerCase().includes(needle)) return false;
+      if (needle && !p.username.toLowerCase().includes(needle) && !(p.name ?? "").toLowerCase().includes(needle)) return false;
       if (filter === "admins") return p.isAdmin || p.isAccessAdmin;
       if (filter === "none") return p.sees.every((g) => base.has(g));
       if (filter.startsWith("can:")) return p.sees.includes(filter.slice(4));
@@ -177,7 +204,7 @@ export default function AccessDashboard({ can, isOwner }: { can: Can; isOwner: b
       </nav>
       <main className="ax-main">
         {!manage && (
-          <Box kind="info">Read only. You can see who has what, but only the owner and access admins can change it. The old admin page still works for you.</Box>
+          <Box kind="info">Read only. You can see who has what. Only Samuel and the access admins (Ayoub, Atom) change access.</Box>
         )}
         {loadError ? (
           <div className="ax-card" style={{ padding: 20 }}>
@@ -226,8 +253,8 @@ function groupsOf(catalog: Grant[]): AppGroup[] {
   const byId = new Map(catalog.map((g) => [g.id, g]));
   return sections.map((s) => ({
     section: { id: s.id, name: s.name, color: s.color },
-    apps: s.apps.filter((a) => byId.has(a.id)).map((a) => ({
-      grant: byId.get(a.id)!, icon: a.icon, tabs: catalog.filter((g) => g.kind === "tab" && g.app === a.id),
+    apps: s.apps.filter((a) => byId.has(a.id) && inUse(byId.get(a.id)!)).map((a) => ({
+      grant: byId.get(a.id)!, icon: a.icon, tabs: catalog.filter((g) => g.kind === "tab" && g.app === a.id && inUse(g)),
     })),
   }));
 }
@@ -258,7 +285,7 @@ function Filters({ q, setQ, filter, setFilter, catalog, count, total }: {
         <option value="admins">Admins (Portal or access)</option>
         <option value="none">No access</option>
         <optgroup label="Can open">
-          {catalog.map((g) => <option key={g.id} value={`can:${g.id}`}>{g.kind === "tab" ? `  ${g.label}` : g.label}</option>)}
+          {catalog.map((g) => <option key={g.id} value={`can:${g.id}`}>{g.full}</option>)}
         </optgroup>
       </select>
       <span className="ax-label">{count} of {total} people</span>
@@ -280,9 +307,9 @@ function PeopleView({ state, list, selectedId, setSelectedId, manage, onSaved, s
       <div className="ax-list ax-card" style={{ maxHeight: "calc(100vh - 220px)", overflowY: "auto" }}>
         {list.length === 0 ? <Empty>Nobody matches. Clear the search or pick another filter.</Empty> : list.map((p) => (
           <button key={p.id} className="ax-person-item" aria-current={p.id === selectedId} onClick={() => setSelectedId(p.id)}>
-            <Avatar url={p.avatarUrl} name={p.username} size={28} />
+            <Avatar url={p.avatarUrl} name={nameOf(p)} size={28} />
             <span style={{ flex: 1, minWidth: 0 }}>
-              <span style={{ display: "block", fontSize: 12, fontWeight: 600, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{p.username}</span>
+              <Who p={p} />
               <span style={{ display: "block", fontSize: 10, color: "var(--text-muted)", marginTop: 2 }}>
                 {appCount(p)} apps{tabCount(p) ? `, ${tabCount(p)} tabs` : ""}
               </span>
@@ -314,6 +341,8 @@ function PersonDetail({ state, person, manage, onSaved, onBack, showHistory }: {
   const [previewError, setPreviewError] = useState<string | null>(null);
   const [presetMsg, setPresetMsg] = useState<string | null>(null);
   const locked = !manage ? "Read only." : person.lockedReason ? `Locked: ${person.lockedReason}.` : null;
+  const ownerOnlyLocked = (g: Grant) => g.ownerOnly && !state.viewer.isOwner;
+  const notInUse = state.catalog.filter((g) => !inUse(g));
   const groups = useMemo(() => groupsOf(state.catalog), [state.catalog]);
   const n = Object.keys(staged).length;
   const seq = useRef(0);
@@ -363,14 +392,21 @@ function PersonDetail({ state, person, manage, onSaved, onBack, showHistory }: {
     if (v && !sees.has(g.id)) tags.push(g.kind === "tab" ? { text: "needs app", color: "var(--amber)", title: "A tab only works when its app is on." } : { text: "blocked by app rule", color: "var(--amber)", title: g.note ?? undefined });
     if (!v && sees.has(g.id)) tags.push({ text: "has it anyway", color: "var(--text-dim)", title: person.isOwner ? "The owner has everything." : "Admins or everyone get this without a grant." });
     if (person.rows[g.id]?.auto) tags.push({ text: "auto", color: "var(--text-muted)", title: "Set by the Discord team sync." });
-    if (g.kind === "tab" && !g.enforced) tags.push({ text: "not enforced yet", color: "var(--text-muted)", title: g.note ?? "The app still uses its own gate." });
+    if (g.ownerOnly) tags.push({ text: "Samuel only", color: "var(--amber)", title: "Only the owner can change this one." });
+    const effect = EFFECT_WORDS[g.effect];
+    if (effect && g.kind === "app") tags.push({ text: effect.text, color: "var(--text-muted)", title: effect.title });
     return (
       <button key={g.id} type="button" role="switch" aria-checked={v} className={`ax-row${g.kind === "tab" ? " ax-row-tab" : ""}`}
-        data-staged={isStaged} disabled={!!locked} onClick={() => setStaged((s) => toggled(person, s, g.id))}>
+        data-staged={isStaged} disabled={!!locked || ownerOnlyLocked(g)} onClick={() => setStaged((s) => toggled(person, s, g.id))}>
         <span className="ax-switch" data-on={v} aria-hidden />
         {icon && <span style={{ width: 18, textAlign: "center" }} aria-hidden>{icon}</span>}
         <span style={{ flex: 1, minWidth: 0, fontSize: g.kind === "tab" ? 11 : 12, fontWeight: g.kind === "app" ? 600 : 400, color: g.kind === "tab" ? "var(--text-dim)" : "var(--text)" }}>
-          {g.kind === "tab" ? g.label.replace(/^.*?:\s*/, "") : g.label}
+          {g.label}
+          {g.id === "pulse" && state.pulseIncluded.length > 0 && (
+            <span style={{ display: "block", fontSize: 10, fontWeight: 400, color: "var(--text-muted)", marginTop: 2 }}>
+              Comes with it: {state.pulseIncluded.join(", ")}
+            </span>
+          )}
         </span>
         <span style={{ display: "inline-flex", flexWrap: "wrap", gap: 4, justifyContent: "flex-end" }}>
           {isStaged && <span className="ax-badge" style={{ color: "var(--amber)" }}>{storedOf(person, g.id) ? "on" : "off"} → {v ? "on" : "off"}</span>}
@@ -384,9 +420,10 @@ function PersonDetail({ state, person, manage, onSaved, onBack, showHistory }: {
     <div>
       <button className="ax-btn ax-back" onClick={onBack} style={{ marginBottom: 12 }}>← People</button>
       <div className="ax-card" style={{ padding: 14, marginBottom: 12, display: "flex", flexWrap: "wrap", alignItems: "center", gap: 12 }}>
-        <Avatar url={person.avatarUrl} name={person.username} size={40} />
+        <Avatar url={person.avatarUrl} name={nameOf(person)} size={40} />
         <div style={{ flex: "1 1 160px", minWidth: 0 }}>
-          <div style={{ fontSize: 14, fontWeight: 700, overflowWrap: "anywhere" }}>{person.username}</div>
+          <div style={{ fontSize: 14, fontWeight: 700, overflowWrap: "anywhere" }}>{nameOf(person)}</div>
+          {person.name && <div style={{ fontSize: 11, color: "var(--text-muted)", overflowWrap: "anywhere" }}>Discord: @{person.username}</div>}
           <div style={{ marginTop: 4 }}><Badges p={person} /></div>
         </div>
         <div style={{ display: "flex", flexWrap: "wrap", gap: 8, flex: "1 1 220px", justifyContent: "flex-end" }}>
@@ -410,13 +447,22 @@ function PersonDetail({ state, person, manage, onSaved, onBack, showHistory }: {
               {grp.apps.map((a) => [row(a.grant, a.icon), ...a.tabs.map((t) => row(t))])}
             </div>
           ))}
+          {notInUse.length > 0 && (
+            <details style={{ padding: "10px 12px", borderTop: "1px solid var(--border)" }}>
+              <summary className="ax-label" style={{ cursor: "pointer" }}>Not in use yet ({notInUse.length})</summary>
+              <div style={{ fontSize: 10, color: "var(--text-muted)", margin: "6px 0" }}>These switches change nothing today (open to everyone, decided by another list, or the app does not ask Portal yet), so they are hidden.</div>
+              <ul style={{ listStyle: "none", margin: 0, padding: 0, fontSize: 11, lineHeight: 1.8, color: "var(--text-dim)" }}>
+                {notInUse.map((g) => <li key={g.id} title={g.note ?? undefined}>{g.full}: {storedOf(person, g.id) ? "on" : "off"}</li>)}
+              </ul>
+            </details>
+          )}
         </div>
         <PreviewPanel catalog={state.catalog} preview={preview} fallback={person.sees} staged={n > 0} error={previewError} />
       </div>
       {n > 0 && (
         <div className="ax-bar">
           <div className="ax-bar-inner">
-            <span style={{ fontSize: 11, color: "var(--amber)", fontWeight: 700 }}>{n} unsaved {n === 1 ? "change" : "changes"} for {person.username}</span>
+            <span style={{ fontSize: 11, color: "var(--amber)", fontWeight: 700 }}>{n} unsaved {n === 1 ? "change" : "changes"} for {nameOf(person)}</span>
             <input className="ax-input" placeholder="Note (optional)" value={note} onChange={(e) => setNote(e.target.value)} aria-label="Note" style={{ flex: "1 1 200px" }} />
             <button className="ax-btn" onClick={() => { setStaged({}); setPresetMsg(null); setError(null); }} disabled={saving}>Discard</button>
             <button className="ax-btn ax-btn-primary" onClick={save} disabled={saving}>{saving ? "Saving..." : "Save"}</button>
@@ -468,8 +514,9 @@ function MatrixView({ state, list, manage, onSaved }: {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [note, setNote] = useState("");
-  const apps = state.catalog.filter((g) => g.kind === "app");
-  const tabsOf = (id: string) => state.catalog.filter((g) => g.kind === "tab" && g.app === id);
+  const apps = state.catalog.filter((g) => g.kind === "app" && inUse(g));
+  const tabsOf = (id: string) => state.catalog.filter((g) => g.kind === "tab" && g.app === id && inUse(g));
+  const ownerOnlyLocked = (g: Grant) => g.ownerOnly && !state.viewer.isOwner;
   const cols = apps.flatMap((a) => [a, ...(expanded.has(a.id) ? tabsOf(a.id) : [])]);
   const byId = new Map(state.people.map((p) => [p.id, p]));
   const n = Object.values(staged).reduce((s, x) => s + Object.keys(x).length, 0);
@@ -500,9 +547,9 @@ function MatrixView({ state, list, manage, onSaved }: {
       setBusy(false);
     }
   };
-  const label = (id: string) => state.catalog.find((g) => g.id === id)?.label ?? id;
+  const label = (id: string) => state.catalog.find((g) => g.id === id)?.full ?? id;
   const cellTitle = (p: Person, g: Grant, v: boolean) =>
-    `${p.username} · ${g.label}: ${v ? "on" : "off"}${!v && p.sees.includes(g.id) ? " (has it anyway)" : ""}${p.lockedReason && manage ? ` · ${p.lockedReason}` : ""}`;
+    `${nameOf(p)} · ${g.full}: ${v ? "on" : "off"}${!v && p.sees.includes(g.id) ? " (has it anyway)" : ""}${p.lockedReason && manage ? ` · ${p.lockedReason}` : ""}`;
 
   return (
     <div>
@@ -517,9 +564,9 @@ function MatrixView({ state, list, manage, onSaved }: {
                 <tr>
                   <th className="ax-sticky">Person</th>
                   {cols.map((g) => (
-                    <th key={g.id} className={g.kind === "tab" ? "ax-tabcol" : undefined} title={g.label}>
+                    <th key={g.id} className={g.kind === "tab" ? "ax-tabcol" : undefined} title={g.full}>
                       <div style={{ overflow: "hidden", textOverflow: "ellipsis", color: g.kind === "tab" ? "var(--text-muted)" : undefined }}>
-                        {g.kind === "tab" ? g.label.replace(/^.*?:\s*/, "") : g.label}
+                        {g.label}
                       </div>
                       {g.kind === "app" && tabsOf(g.id).length > 0 && (
                         <button className="ax-btn" style={{ marginTop: 4, padding: "2px 6px", minHeight: 22, fontSize: 9 }} onClick={() => flipExpand(g.id)} aria-expanded={expanded.has(g.id)}>
@@ -535,8 +582,8 @@ function MatrixView({ state, list, manage, onSaved }: {
                   <tr key={p.id}>
                     <td className="ax-sticky">
                       <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
-                        <Avatar url={p.avatarUrl} name={p.username} size={20} />
-                        <span style={{ fontWeight: 600, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{p.username}</span>
+                        <Avatar url={p.avatarUrl} name={nameOf(p)} size={20} />
+                        <Who p={p} size={11} />
                       </div>
                     </td>
                     {cols.map((g) => {
@@ -544,7 +591,7 @@ function MatrixView({ state, list, manage, onSaved }: {
                       const isStaged = !!staged[p.id] && g.id in staged[p.id];
                       return (
                         <td key={g.id} className={g.kind === "tab" ? "ax-tabcol" : undefined}>
-                          <button className="ax-cell" data-on={v} data-staged={isStaged} disabled={!manage || !!p.lockedReason}
+                          <button className="ax-cell" data-on={v} data-staged={isStaged} disabled={!manage || !!p.lockedReason || ownerOnlyLocked(g)}
                             title={cellTitle(p, g, v)} aria-label={cellTitle(p, g, v)} onClick={() => flip(p, g.id)}>
                             {v ? "✓" : p.sees.includes(g.id) ? "★" : "·"}
                           </button>
@@ -567,8 +614,8 @@ function MatrixView({ state, list, manage, onSaved }: {
             {list.map((p) => (
               <div key={p.id} className="ax-card" style={{ padding: 12, marginBottom: 10 }}>
                 <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 8 }}>
-                  <Avatar url={p.avatarUrl} name={p.username} size={24} />
-                  <span style={{ fontWeight: 700, fontSize: 12, flex: 1, minWidth: 0, overflowWrap: "anywhere" }}>{p.username}</span>
+                  <Avatar url={p.avatarUrl} name={nameOf(p)} size={24} />
+                  <span style={{ flex: 1, minWidth: 0 }}><Who p={p} /></span>
                   <Badges p={p} />
                 </div>
                 {p.lockedReason && manage && <div style={{ fontSize: 10, color: "var(--text-muted)", marginBottom: 6 }}>Locked: {p.lockedReason}</div>}
@@ -577,9 +624,9 @@ function MatrixView({ state, list, manage, onSaved }: {
                     const v = valueOf(p, staged[p.id], g.id);
                     const isStaged = !!staged[p.id] && g.id in staged[p.id];
                     return (
-                      <button key={g.id} className="ax-chip" data-on={v} data-staged={isStaged} disabled={!manage || !!p.lockedReason}
+                      <button key={g.id} className="ax-chip" data-on={v} data-staged={isStaged} disabled={!manage || !!p.lockedReason || ownerOnlyLocked(g)}
                         aria-pressed={v} onClick={() => flip(p, g.id)}>
-                        {v ? "✓" : p.sees.includes(g.id) ? "★" : "·"} {g.label}
+                        {v ? "✓" : p.sees.includes(g.id) ? "★" : "·"} {g.full}
                       </button>
                     );
                   })}
@@ -609,7 +656,7 @@ function MatrixView({ state, list, manage, onSaved }: {
             <div style={{ display: "flex", flexDirection: "column", gap: 10, marginBottom: 14 }}>
               {dry.map((d) => (
                 <div key={d.userId} style={{ border: "1px solid var(--border)", padding: 10 }}>
-                  <div style={{ fontWeight: 700, fontSize: 12, marginBottom: 6 }}>{d.username}</div>
+                  <div style={{ fontWeight: 700, fontSize: 12, marginBottom: 6 }}>{(() => { const p = byId.get(d.userId); return p ? nameOf(p) : d.username; })()}</div>
                   <ul style={{ listStyle: "none", margin: 0, padding: 0, fontSize: 11, lineHeight: 1.8 }}>
                     {d.changes.map((c) => (
                       <li key={c.grantId} style={{ color: c.stale ? "var(--amber)" : "var(--text-dim)" }}>
@@ -705,11 +752,11 @@ function AuditView({ people, catalog, manage, personFilter, setPersonFilter, onU
       <div style={{ display: "flex", flexWrap: "wrap", gap: 8, marginBottom: 14 }}>
         <select className="ax-input" value={personFilter} onChange={(e) => setPersonFilter(e.target.value)} aria-label="Filter by person" style={{ flex: "1 1 200px" }}>
           <option value="">Any person changed</option>
-          {people.map((p) => <option key={p.id} value={p.id}>{p.username}</option>)}
+          {people.map((p) => <option key={p.id} value={p.id}>{p.name ? `${p.name} (@${p.username})` : p.username}</option>)}
         </select>
         <select className="ax-input" value={actor} onChange={(e) => setActor(e.target.value)} aria-label="Filter by who changed it" style={{ flex: "1 1 200px" }}>
           <option value="">Changed by anyone</option>
-          {people.filter((p) => p.isAdmin || p.isAccessAdmin).map((p) => <option key={p.id} value={p.id}>{p.username}</option>)}
+          {people.filter((p) => p.isAdmin || p.isAccessAdmin).map((p) => <option key={p.id} value={p.id}>{p.name ? `${p.name} (@${p.username})` : p.username}</option>)}
         </select>
       </div>
       {error && <Box kind="error">Could not load the log: {error} <button className="ax-btn" onClick={reload} style={{ marginLeft: 8 }}>Try again</button></Box>}
@@ -914,8 +961,8 @@ function AdminsView({ people, isOwner, reload, notify }: { people: Person[]; isO
   };
   const line = (p: Person, removable: boolean) => (
     <div key={p.id} style={{ display: "flex", alignItems: "center", gap: 10, padding: "10px 12px", borderTop: "1px solid var(--border)", flexWrap: "wrap" }}>
-      <Avatar url={p.avatarUrl} name={p.username} size={28} />
-      <span style={{ fontWeight: 600, fontSize: 12, flex: 1, minWidth: 0 }}>{p.username}</span>
+      <Avatar url={p.avatarUrl} name={nameOf(p)} size={28} />
+      <span style={{ flex: 1, minWidth: 0 }}><Who p={p} /></span>
       <Badges p={p} />
       {removable && isOwner && (confirm === p.id ? (
         <>
@@ -938,7 +985,7 @@ function AdminsView({ people, isOwner, reload, notify }: { people: Person[]; isO
         <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
           <select className="ax-input" value={pick} onChange={(e) => setPick(e.target.value)} aria-label="Person to make access admin" style={{ flex: "1 1 220px" }}>
             <option value="">Pick a person...</option>
-            {people.filter((p) => !p.isAccessAdmin && !p.isOwner).map((p) => <option key={p.id} value={p.id}>{p.username}</option>)}
+            {people.filter((p) => !p.isAccessAdmin && !p.isOwner).map((p) => <option key={p.id} value={p.id}>{p.name ? `${p.name} (@${p.username})` : p.username}</option>)}
           </select>
           <button className="ax-btn ax-btn-primary" disabled={!pick || busy} onClick={() => set(pick, true)}>Make access admin</button>
         </div>
