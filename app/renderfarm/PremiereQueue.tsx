@@ -273,7 +273,7 @@ export default function PremiereQueue({ onJobs, onDown }: { onJobs?: (jobs: PJob
       <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap", marginBottom: 10 }}>
         <p style={{ ...label, margin: 0 }}>Premiere renders</p>
         <span style={{ fontSize: 11, color: "var(--text-dim)" }}>
-          {premiereLine(jobs)}
+          {error ? (data ? `${premiereLine(jobs)} (last known)` : "list not answering") : premiereLine(jobs)}
           {lanes.sync ? " · downloading" : ""}
           {lanes.render ? " · rendering" : ""}
           {lanes.finish ? " · uploading" : ""}
