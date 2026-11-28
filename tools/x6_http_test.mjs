@@ -243,8 +243,8 @@ try {
   const ok2 = await answer(AT, fRow.id, "approve");
   await Q(`update "AccessRequest" set state='approving', "openKey"="userId" || '|' || "grantId", "changeId"=null, "decidedAt"=now() - interval '3 minutes' where id=$1`, [fRow.id]);
   check("F9: open ask for a grant the person holds is left out of the Requests list", ok2.status === 200 && (await rowOn(WISE, g2)) && !(await reqs(AT)).open.some((r) => r.id === fRow.id));
-  const wme = (await call(W, "GET", "/api/access/me")).json;
-  check("F9: and out of the member's own open asks (badge and rows agree)", !wme.asks.some((a) => a.grantId === g2 && a.state === "open"));
+  const wme9 = (await call(W, "GET", "/api/access/me")).json;
+  check("F9: and out of the member's own open asks (badge and rows agree)", !wme9.asks.some((a) => a.grantId === g2 && a.state === "open"));
   const re = await answer(AT, fRow.id, "approve");
   check("F2: approving the stuck row again closes it with no new change (already had it)", re.status === 200 && re.json?.state === "approved" && !re.json?.changeId
     && (await Q(`select state from "AccessRequest" where id=$1`, [fRow.id]))[0].state === "approved", `HTTP ${re.status} ${re.json?.changeId ?? ""}`);
