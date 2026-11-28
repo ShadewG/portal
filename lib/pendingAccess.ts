@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 import { prisma } from "@/lib/db";
 import { writeGrantChanges } from "@/lib/accessChanges";
 import { isKnownGrant } from "@/lib/grants";
+import { isOwner } from "@/lib/access";
 
 // Log each skip once per user per process (the routes call this on every /api/me and redirect). Keyed by user id + the
 // pending row ids, so a new pre-grant logs again. Capped so it cannot grow without bound.
@@ -22,9 +23,11 @@ function logOnce(key: string, fn: () => void) {
  * Applied grants are written through the audited writer (one change per sign-in, actor "pending-email"), with the
  * row values the old apply wrote (granted only; grantedBy/grantedAt untouched; keepMeta). Pending rows whose app id is
  * not in the grant catalog (lib/grants.ts) are skipped and stay unresolved. Skip logs: once per user per process.
+ * Review S1 (28 Nov 2026): a pre-grant made by this same person (grantedBy = their Discord id) is never applied to
+ * them (owner excepted), so a later change of their Discord email cannot turn it into a self-grant.
  */
 export async function applyPendingGrants(
-  dbUser: { id: string; email: string | null },
+  dbUser: { id: string; email: string | null; discordId?: string },
   user: Record<string, unknown> | undefined,
 ): Promise<void> {
   const email = dbUser.email;
@@ -33,7 +36,14 @@ export async function applyPendingGrants(
     where: { email, granted: true, resolvedAt: null },
   });
   if (all.length === 0) return;
-  const pending = all.filter((row) => isKnownGrant(row.appId));
+  const own = (row: { grantedBy: string | null }) =>
+    !!dbUser.discordId && row.grantedBy === dbUser.discordId && !isOwner(dbUser.discordId);
+  const self = all.filter(own);
+  if (self.length) {
+    logOnce(`self:${dbUser.id}:${self.map((row) => row.id).sort().join(",")}`, () =>
+      console.warn("[pending-access] skipped: a pre-grant may not be applied to the person who made it", { userId: dbUser.id, pending: self.map((row) => row.id) }));
+  }
+  const pending = all.filter((row) => isKnownGrant(row.appId) && !own(row));
   const unknown = all.filter((row) => !isKnownGrant(row.appId));
   if (unknown.length) {
     logOnce(`unknown:${dbUser.id}:${unknown.map((row) => row.id).sort().join(",")}`, () =>

@@ -248,14 +248,31 @@ export async function setGrantsMany(actor: Actor, items: BatchItem[], note?: str
 const pendingTarget = (pendingId: string) => `pending:${pendingId}`;
 
 /**
+ * Target guards for a pre-grant (review S1, 28 Nov 2026): an email is a person too. For everyone but the owner, every
+ * User the email already belongs to (User.email or a linked app email, case-insensitive) goes through guardTarget, and
+ * the actor's own emails (their User row and their app links) are refused outright, so "never your own" and "never
+ * the owner's" hold for pre-grants as for direct changes. A new email (nobody has it) is allowed as before.
+ */
+async function guardPendingTarget(tx: Tx, actor: Actor, auth: Authority, email: string) {
+  if (auth.level === "owner") return;
+  const e = email.trim();
+  const owners = await tx.user.findMany({
+    where: { OR: [{ email: { equals: e, mode: "insensitive" } }, { appLinks: { some: { externalEmail: { equals: e, mode: "insensitive" } } } }] },
+    select: { id: true, discordId: true },
+  });
+  for (const target of owners) guardTarget(actor, auth, target);
+}
+
+/**
  * Create or change a pre-grant by email (PendingAppAccess), catalog-checked and audited (targetUserId pending:<row id>).
- * Same rights as setGrants.
+ * Same rights and target guards as setGrants (guardPendingTarget).
  */
 export async function setPendingGrant(actor: Actor, email: string, grantId: string, granted: boolean): Promise<ChangeResult> {
   if (!email || typeof email !== "string" || typeof granted !== "boolean") throw new AccessChangeError("bad_request", "email, appId and granted are required");
   if (!isKnownGrant(grantId)) throw new AccessChangeError("bad_request", "unknown grant");
   const auth = await requireWriter(actor, [grantId]);
   const result = await prisma.$transaction(async (tx) => {
+    await guardPendingTarget(tx, actor, auth, email);
     const before = await tx.pendingAppAccess.findUnique({ where: { email_appId: { email, appId: grantId } } });
     const oldState = stateOf(before);
     const newState: GrantState = granted ? "on" : "off";

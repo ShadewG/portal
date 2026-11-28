@@ -213,6 +213,42 @@ if (autoDesk?.user.email) {
   await prisma.pendingAppAccess.deleteMany({ where: { id: "m2fixdesk" } });
 } else check("auto Desk row with an email exists for the stickiness test", false);
 
+// review S1 (28 Nov): pre-grants by email carry the same target guards as direct changes (access admin Atom)
+{
+  const s0 = await C.setAccessAdmin(O, atom.id, true, "s1 test");
+  const atomEmail = (await prisma.user.findUniqueOrThrow({ where: { id: atom.id } })).email;
+  const pendBefore = await prisma.pendingAppAccess.count();
+  if (atomEmail) {
+    check("S1 access admin: self pre-grant (own User email) refused", (await code(C.setPendingGrant(T, atomEmail, "renderfarm", true))) === "forbidden");
+    check("S1 access admin: self pre-grant, other case and spaces, refused", (await code(C.setPendingGrant(T, ` ${atomEmail.toUpperCase()} `, "renderfarm", true))) === "forbidden");
+  } else check("S1: atom has an email in portal_dev", false);
+  const link = await prisma.appUserLink.create({ data: { userId: atom.id, appId: "s1-test-app", externalUserId: "s1", externalEmail: "s1-linked-atom@example.test" } });
+  check("S1 access admin: self pre-grant via a linked app email refused", (await code(C.setPendingGrant(T, "S1-Linked-Atom@example.test", "renderfarm", true))) === "forbidden");
+  await prisma.appUserLink.delete({ where: { id: link.id } });
+  if (owner.email) check("S1 access admin: pre-grant to the owner's email refused", (await code(C.setPendingGrant(T, owner.email, "patreon", true))) === "forbidden");
+  check("S1: nothing written by the refusals", (await prisma.pendingAppAccess.count()) === pendBefore);
+  const fresh = `s1-new-${Date.now()}@example.test`;
+  check("S1 access admin: pre-grant for a new email still allowed", (await code(C.setPendingGrant(T, fresh, "renderfarm", true))) === "ok");
+  check("S1 access admin: pre-grant for another existing person allowed", (await code(C.setPendingGrant(T, aminoEmail, "renderfarm", true))) === "ok");
+  check("S1 owner: pre-grant to own email allowed", !owner.email || (await code(C.setPendingGrant(O, owner.email, "pulse.takedowns", true))) === "ok");
+  await C.deletePendingGrant(T, fresh, "renderfarm");
+  await C.deletePendingGrant(T, aminoEmail, "renderfarm");
+  if (owner.email) await C.deletePendingGrant(O, owner.email, "pulse.takedowns");
+  // apply side: a pre-grant made by this same person is never applied to them (e.g. after they change their email)
+  if (atomEmail) {
+    await prisma.pendingAppAccess.create({ data: { id: "s1selfmade", email: atomEmail, appId: "renderfarm", granted: true, grantedBy: atom.discordId } });
+    const before = await rowsOf(atom.id);
+    const w = []; const rw = console.warn; console.warn = (...a) => w.push(a);
+    await P.applyPendingGrants({ id: atom.id, email: atomEmail, discordId: atom.discordId }, { email: atomEmail, emailVerified: true });
+    console.warn = rw;
+    check("S1 apply: self-made pre-grant not applied, stays unresolved, skip logged",
+      (await rowsOf(atom.id)) === before && (await prisma.pendingAppAccess.findUnique({ where: { id: "s1selfmade" } }))?.resolvedAt === null && w.length === 1);
+    await prisma.pendingAppAccess.deleteMany({ where: { id: "s1selfmade" } });
+  }
+  check("S1: pre-grant table back to its size", (await prisma.pendingAppAccess.count()) === pendBefore);
+  await C.revertChange(O, s0.changeId);
+}
+
 const fp1 = await fingerprint();
 check("AppAccess + User flags identical to the start", fp0 === fp1, `${fp0} / ${fp1}`);
 const failed = results.filter((r) => !r.ok).length;
