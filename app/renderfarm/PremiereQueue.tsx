@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties, type KeyboardEvent } from "react";
+import { fmtWhen, premiereLine, PREMIERE_DONE as DONE } from "@/lib/renderfarmView";
 
 /**
  * Premiere renders queue (owner, 16 Nov 2026): queue Premiere projects by name, change the order freely, and let the
@@ -39,7 +40,8 @@ type PJob = {
 type Found = { path: string; name: string; folder: string; modified?: string | null; size?: number; autosave: boolean; old: boolean; queued_as?: string | null };
 type Data = { jobs: PJob[]; presets: { id: string; label: string }[]; lanes: Record<string, string>; viewer?: { canControl: boolean }; error?: string };
 
-const DONE = new Set(["delivered", "cleaned"]);
+/** Shown instead of the raw error (it could name the service's address). */
+const PF_DOWN = "The Premiere list is not answering right now.";
 const REFRESH_MS = 5000;
 
 const card: CSSProperties = { background: "var(--bg-surface)", border: "1px solid var(--border)", padding: 16 };
@@ -76,7 +78,7 @@ function ago(ts?: string | null): string {
   if (s < 90) return "just now";
   if (s < 5400) return `${Math.round(s / 60)} min ago`;
   if (s < 129600) return `${Math.round(s / 3600)} h ago`;
-  return d.toLocaleDateString([], { month: "short", day: "numeric" });
+  return fmtWhen(d.getTime());
 }
 
 function folderLabel(folder?: string | null): string {
@@ -94,7 +96,8 @@ function progressText(j: PJob): string {
   return "";
 }
 
-export default function PremiereQueue() {
+/** onJobs: every fresh job list, for the page's top line. */
+export default function PremiereQueue({ onJobs }: { onJobs?: (jobs: PJob[]) => void } = {}) {
   const [data, setData] = useState<Data | null>(null);
   const [jobs, setJobs] = useState<PJob[]>([]);
   const [error, setError] = useState<string | null>(null);
@@ -126,16 +129,20 @@ export default function PremiereQueue() {
     if (dragging.current || Date.now() < pendingOrder.current) return;
     try {
       const res = await fetch("/api/renderfarm/premiere?op=jobs", { cache: "no-store" });
-      const body = (await res.json()) as Data;
-      if (!res.ok) return setError(body.error || `HTTP ${res.status}`);
+      const body = (await res.json().catch(() => ({}))) as Data;
+      if (!res.ok) {
+        console.warn("premiere queue:", res.status, body.error);
+        return setError(PF_DOWN);
+      }
       if (dragging.current || Date.now() < pendingOrder.current) return;
       setData(body);
       setJobs(body.jobs);
+      onJobs?.(body.jobs);
       setError(null);
     } catch {
-      setError("Could not reach the Premiere queue");
+      setError(PF_DOWN);
     }
-  }, []);
+  }, [onJobs]);
 
   useEffect(() => {
     void load();
@@ -263,7 +270,7 @@ export default function PremiereQueue() {
       <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap", marginBottom: 10 }}>
         <p style={{ ...label, margin: 0 }}>Premiere renders</p>
         <span style={{ fontSize: 11, color: "var(--text-dim)" }}>
-          {active.length ? `${active.length} in the queue` : "queue is empty"}
+          {premiereLine(jobs)}
           {lanes.sync ? " · downloading" : ""}
           {lanes.render ? " · rendering" : ""}
           {lanes.finish ? " · uploading" : ""}
@@ -276,7 +283,12 @@ export default function PremiereQueue() {
         )}
       </div>
 
-      {error && <p style={{ color: "var(--red)", fontSize: 12, margin: "0 0 8px" }}>▲ {error}</p>}
+      {error && (
+        <p style={{ color: "var(--red)", fontSize: 12, margin: "0 0 8px", display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
+          {error}
+          <button style={btn("normal", true)} onClick={() => void load()}>Try again</button>
+        </p>
+      )}
       {notice && <p style={{ color: notice.ok ? "var(--green)" : "var(--red)", fontSize: 12, margin: "0 0 8px" }}>{notice.text}</p>}
 
       {adding && canControl && (
