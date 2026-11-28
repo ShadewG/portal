@@ -19,7 +19,7 @@ export default async function NoAccessPage({ searchParams }: { searchParams: Pro
   const discordId = (session?.user as { discordId?: unknown } | undefined)?.discordId;
   const signedIn = typeof discordId === "string" && !!discordId;
   const view = signedIn ? await noAccessView(discordId, want) : null;
-  const who = view?.deciders ?? joinOr((await deciders().catch(() => ({ all: [] as string[] }))).all) || "The access admins";
+  const who = view?.deciders ?? (joinOr((await deciders().catch(() => ({ all: [] as string[] }))).all) || "The access admins");
   const self = `/no-access${want ? `?want=${encodeURIComponent(want)}` : ""}`;
 
   return (

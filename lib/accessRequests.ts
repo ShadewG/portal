@@ -8,7 +8,7 @@ import {
 } from "@/lib/accessChanges";
 import { publicId, type Viewer } from "@/lib/accessAdmin";
 import { nameBook, realName } from "@/lib/peopleNames";
-import { plainFull, plainOf } from "@/lib/plainNames";
+import { plainFull, plainOf, shortName } from "@/lib/plainNames";
 
 /**
  * "Ask for access" (X6, R-3258 B8, 28 Nov 2026). Anyone signed in may ask for a grant they do not have; the access
@@ -45,7 +45,7 @@ export function ownerOnlyAsk(grantId: string): boolean {
 export function cleanLine(v: unknown, max = TEXT_MAX): string | null {
   if (typeof v !== "string") return null;
   // eslint-disable-next-line no-control-regex
-  const s = v.replace(/[\u0000-\u001f\u007f-\u009f  ]+/g, " ").replace(/\s+/g, " ").trim().slice(0, max).trim();
+  const s = v.replace(/[\u0000-\u001f\u007f-\u009f\u2028\u2029]+/g, " ").replace(/\s+/g, " ").trim().slice(0, max).trim();
   return s || null;
 }
 
@@ -92,7 +92,7 @@ export async function deciders(): Promise<{ owner: string; all: string[] }> {
     orderBy: { createdAt: "asc" },
   });
   const book = await nameBook();
-  const nameOf = (u: { discordId: string; username: string }) => realName(book, u) ?? u.username;
+  const nameOf = (u: { discordId: string; username: string }) => shortName(u.username, realName(book, u));
   const ownerRow = rows.find((r) => isOwner(r.discordId));
   const ownerName = ownerRow ? nameOf(ownerRow) : "the owner";
   return { owner: ownerName, all: [ownerName, ...rows.filter((r) => !isOwner(r.discordId)).map(nameOf)] };
@@ -254,7 +254,9 @@ export async function answerAsk(viewer: Viewer, id: unknown, action: unknown, no
   const refusal = answerRefusal(viewer, req.grantId, target, owner);
   if (refusal) throw new AccessChangeError("forbidden", refusal);
 
-  const decided = { decidedAt: new Date(), decidedBy: actor.discordId, decidedByName: actor.username ?? null, decisionNote: note };
+  // the name the person will read ("Declined by Ayoub"), not a Discord handle
+  const byName = shortName(actor.username ?? "", realName(await nameBook(), { discordId: actor.discordId, username: actor.username ?? "" }));
+  const decided = { decidedAt: new Date(), decidedBy: actor.discordId, decidedByName: byName, decisionNote: note };
   const claim = await prisma.accessRequest.updateMany({
     where: { id, state: "open" },
     data: action === "decline" ? { state: "declined", openKey: null, ...decided } : { state: "approving", ...decided },

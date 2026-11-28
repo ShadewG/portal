@@ -55,3 +55,12 @@ export function plainFull(id: string): string {
   if (!parent || id === "portal.access-admin" || !PLAIN[parent]) return p.name;
   return `${p.name} in ${PLAIN[parent].name}`;
 }
+
+/** What the team calls a person where it differs from the first name in Desk's directory (Discord username -> name).
+ *  Used only for "who decides" lines (the access admins). Atom = Dominik on payroll; the team says Atom. */
+const CALLED: Record<string, string> = { atomboy7: "Atom" };
+
+/** Short name for a "who decides" line: the team's name for them, else the directory first name, else the handle. */
+export function shortName(username: string, realName: string | null): string {
+  return CALLED[username.toLowerCase()] ?? (realName ? realName.split(" ")[0] : username);
+}
