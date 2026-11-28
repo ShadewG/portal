@@ -8,12 +8,20 @@
 // Oct 2026) signs in, and a callback with a foreign iss is still refused.
 import { registerHooks } from "node:module";
 import { randomBytes } from "node:crypto";
-import { pathToFileURL } from "node:url";
+import { pathToFileURL, fileURLToPath } from "node:url";
+import { existsSync } from "node:fs";
 import path from "node:path";
 
+const repo = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 // next-auth imports "next/server" and "next/headers" without an extension, which only a bundler resolves.
+// auth.ts imports "@/lib/testUsers" (B0 test users): resolve "@/" to the repo like the bundler does.
 registerHooks({
   resolve(specifier, context, nextResolve) {
+    if (specifier.startsWith("@/")) {
+      const base = path.join(repo, specifier.slice(2));
+      const file = [".ts", ".tsx"].map((e) => base + e).find(existsSync);
+      if (file) return { url: pathToFileURL(file).href, shortCircuit: true };
+    }
     return nextResolve(/^next\/[a-z-]+$/.test(specifier) ? `${specifier}.js` : specifier, context);
   },
 });

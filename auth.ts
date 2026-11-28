@@ -1,5 +1,6 @@
 import NextAuth from "next-auth";
 import Discord from "next-auth/providers/discord";
+import { testSessionExpired } from "@/lib/testUsers";
 
 export const { handlers, signIn, signOut, auth } = NextAuth({
   // Discord now adds the RFC 9207 "iss" parameter to its OAuth callback. With no issuer set,
@@ -28,6 +29,8 @@ export const { handlers, signIn, signOut, auth } = NextAuth({
         // Flag for post-login upsert
         token.needsSync = true;
       }
+      // B0 test users (lib/testUsers.ts): their minted session ends at testUntil (max 24 h), refreshed cookie or not
+      if (testSessionExpired(token)) return null;
       return token;
     },
     session({ session, token }) {

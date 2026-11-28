@@ -128,7 +128,8 @@ for (const u of users) {
 
   const granted = await newAccess.grantedIds(u.id);
   for (const appId of redirectApps) {
-    const ra = await oldRedirectAllowed(oldApps.getAppById(appId), appId, u.discordId, user, u, isAdmin);
+    const oldApp = oldApps.getAppById(appId);   // X3: an app new in this release has no old answer: false
+    const ra = oldApp ? await oldRedirectAllowed(oldApp, appId, u.discordId, user, u, isAdmin) : false;
     const rb = newAccess.handoffAllowed(getAppById(appId), { discordId: u.discordId, user, isAdmin, granted });
     counts.redirectCompared++;
     if (Boolean(ra) !== Boolean(rb)) diffs.push(`${u.username} redirect ${appId}: ${ra} -> ${rb}`);

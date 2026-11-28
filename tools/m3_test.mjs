@@ -87,8 +87,9 @@ try {
   check("no Discord ids in people payload text fields", so.json.people.every((p) => !/^\d{15,}$/.test(p.username)) && !("discordId" in so.json.people[0]));
 
   // ---- preview uses the shared rule ----
-  const p1 = await call(S, "POST", "/api/access/admin/preview", { userId: AMINO, staged: { "pulse.hiring": true, pulse: false } });
-  check("preview: tab without its app is not visible (needs app)", p1.status === 200 && !p1.json.after.includes("pulse.hiring"));
+  // M4: pulse.hiring counts on its own (Pulse gate rule); every other tab still needs its app, e.g. pulse.servers
+  const p1 = await call(S, "POST", "/api/access/admin/preview", { userId: AMINO, staged: { "pulse.servers": true, pulse: false } });
+  check("preview: tab without its app is not visible (needs app)", p1.status === 200 && !p1.json.after.includes("pulse.servers"));
   const p2 = await call(S, "POST", "/api/access/admin/preview", { userId: AMINO, staged: { "pulse.hiring": true, pulse: true } });
   check("preview: tab + app visible", p2.json.after.includes("pulse.hiring") && p2.json.after.includes("pulse"));
   check("preview: unknown grant 400", (await call(S, "POST", "/api/access/admin/preview", { userId: AMINO, staged: { "nope.x": true } })).status === 400);

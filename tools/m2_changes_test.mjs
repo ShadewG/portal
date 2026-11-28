@@ -133,16 +133,32 @@ check("amino rows back after s1..s3", (await rowsOf(amino.id)) === takeBefore);
 // error text never echoes input
 check("unknown grant error does not echo the input", (await msg(C.setGrants(O, amino.id, [{ grantId: "<script>x", granted: true }]))) === "unknown grant");
 
-// Portal admin (hareld, not access admin) through the old /admin routes
+// X3 (28 Nov): a Portal admin who is not an access admin (hareld) changes nothing, the old /admin routes included
 const hBefore = await rowsOf(hareld.id), oBefore = await rowsOf(owner.id);
-check("Portal admin without allowPortalAdmin refused", (await code(C.setGrants(H, amino.id, [{ grantId: "patreon", granted: true }]))) === "forbidden");
-const h1 = await C.setGrants(H, amino.id, [{ grantId: "patreon", granted: true }], "m2 fix test: portal admin app grant", { allowPortalAdmin: true });
-check("Portal admin may still set an app grant (old /admin route), audited", h1.changeId && (await prisma.accessAudit.count({ where: { changeId: h1.changeId } })) === 1);
-check("Portal admin refused for a tab grant", (await code(C.setGrants(H, amino.id, [{ grantId: "pulse.hiring", granted: true }], null, { allowPortalAdmin: true }))) === "forbidden");
-check("Portal admin refused for the owner", (await code(C.setGrants(H, owner.id, [{ grantId: "patreon", granted: false }], null, { allowPortalAdmin: true }))) === "forbidden");
-check("Portal admin refused for themselves", (await code(C.setGrants(H, hareld.id, [{ grantId: "patreon", granted: true }], null, { allowPortalAdmin: true }))) === "forbidden");
-await C.revertChange(O, h1.changeId);
+check("X3 Portal admin refused for an app grant", (await code(C.setGrants(H, amino.id, [{ grantId: "patreon", granted: true }]))) === "forbidden");
+check("X3 Portal admin refused for a tab grant", (await code(C.setGrants(H, amino.id, [{ grantId: "pulse.hiring", granted: true }]))) === "forbidden");
+check("X3 Portal admin refused for the owner", (await code(C.setGrants(H, owner.id, [{ grantId: "patreon", granted: false }]))) === "forbidden");
+check("X3 Portal admin refused for a batch", (await code(C.setGrantsMany(H, [{ userId: amino.id, changes: [{ grantId: "kpi", granted: true }] }]))) === "forbidden");
+check("X3 Portal admin cannot revert", (await code(C.revertChange(H, c2.changeId))) === "forbidden");
 check("hareld + owner rows untouched", (await rowsOf(hareld.id)) === hBefore && (await rowsOf(owner.id)) === oBefore);
+
+// X3 owner-only grants: full Hiring board, Servers, investor Cases dashboard
+{
+  const x0 = await C.setAccessAdmin(O, atom.id, true, "x3 test");
+  for (const g of ["pulse.hiring", "pulse.servers", "cases-dashboard"]) {
+    check(`X3 access admin refused for owner-only ${g}`, (await code(C.setGrants(T, amino.id, [{ grantId: g, granted: true }]))) === "forbidden");
+  }
+  check("X3 access admin refused for a batch with one owner-only grant (nothing written)",
+    (await code(C.setGrantsMany(T, [{ userId: amino.id, changes: [{ grantId: "kpi", granted: true }, { grantId: "pulse.servers", granted: true }] }]))) === "forbidden" && (await rowsOf(amino.id)) === takeBefore);
+  const xk = await C.setGrants(T, amino.id, [{ grantId: "kpi", granted: true }], "x3 test: kpi by access admin");
+  check("X3 access admin may give kpi", xk.changeId !== null);
+  await C.revertChange(T, xk.changeId);
+  const xo = await C.setGrants(O, amino.id, [{ grantId: "pulse.hiring", granted: true }], "x3 test: owner gives hiring");
+  check("X3 access admin cannot undo the owner's owner-only change", (await code(C.revertChange(T, xo.changeId))) === "forbidden");
+  await C.revertChange(O, xo.changeId);
+  await C.revertChange(O, x0.changeId);
+  check("X3 amino rows back after owner-only tests", (await rowsOf(amino.id)) === takeBefore);
+}
 
 // target guards for an access admin; owner may change own grants
 const g0 = await C.setAccessAdmin(O, atom.id, true, "m2 fix test");
@@ -158,10 +174,11 @@ check("owner rows back", (await rowsOf(owner.id)) === oBefore);
 // pre-grants by email (old /admin pending route)
 const aminoEmail = (await prisma.user.findUniqueOrThrow({ where: { id: amino.id } })).email;
 check("pre-grant: unknown grant refused", (await code(C.setPendingGrant(O, aminoEmail, "nope.x", true))) === "bad_request");
-check("pre-grant: Portal admin refused for a tab", (await code(C.setPendingGrant(H, aminoEmail, "pulse.hiring", true, { allowPortalAdmin: true }))) === "forbidden");
-const pg1 = await C.setPendingGrant(H, aminoEmail, "patreon", true, { allowPortalAdmin: true });
+check("X3 pre-grant: Portal admin refused for an app", (await code(C.setPendingGrant(H, aminoEmail, "patreon", true))) === "forbidden");
+check("X3 pre-grant: Portal admin refused for a tab", (await code(C.setPendingGrant(H, aminoEmail, "pulse.hiring", true))) === "forbidden");
+const pg1 = await C.setPendingGrant(O, aminoEmail, "patreon", true);
 const pgAudit = await prisma.accessAudit.findFirst({ where: { changeId: pg1.changeId } });
-check("pre-grant: Portal admin app pre-grant audited (target pending:<id>, no email)", pgAudit?.targetUserId.startsWith("pending:") && !JSON.stringify(pgAudit).includes(aminoEmail));
+check("pre-grant: owner app pre-grant audited (target pending:<id>, no email)", pgAudit?.targetUserId.startsWith("pending:") && !JSON.stringify(pgAudit).includes(aminoEmail));
 check("pre-grant change cannot be reverted with revertChange", (await code(C.revertChange(O, pg1.changeId))) === "bad_request");
 // an unknown id written straight into the table (as the old route allowed) is skipped and stays unresolved
 await prisma.pendingAppAccess.create({ data: { id: "m2fixunknown", email: aminoEmail, appId: "nope.unknown", granted: true, grantedBy: "m2-test" } });
@@ -178,7 +195,8 @@ check("verified apply: unknown pre-grant not applied, still unresolved",
   (await prisma.pendingAppAccess.findUnique({ where: { id: "m2fixunknown" } }))?.resolvedAt === null);
 await prisma.appAccess.delete({ where: { id: patreonRow.id } });
 await prisma.pendingAppAccess.deleteMany({ where: { id: "m2fixunknown" } });
-check("pre-grant delete audited", (await code(C.deletePendingGrant(H, aminoEmail, "patreon", { allowPortalAdmin: true }))) === "ok");
+check("X3 pre-grant delete by Portal admin refused", (await code(C.deletePendingGrant(H, aminoEmail, "patreon"))) === "forbidden");
+check("pre-grant delete audited", (await code(C.deletePendingGrant(O, aminoEmail, "patreon"))) === "ok");
 check("amino rows back after pre-grant tests", (await rowsOf(amino.id)) === takeBefore);
 
 // Desk stickiness: a pre-grant on an auto-managed Desk row keeps grantedBy/grantedAt (old apply behavior)
