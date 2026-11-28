@@ -4,10 +4,11 @@ import { getAppById, sections } from "@/lib/apps";
 import { getGrant, isKnownGrant } from "@/lib/grants";
 import { grantAllowed, grantedIds, isOwner } from "@/lib/access";
 import {
-  ACCESS_ADMIN_GRANT, AccessChangeError, accessLevelOf, canManageAccess, setAccessAdmin, setGrants, targetRefusal, type Actor,
+  ACCESS_ADMIN_GRANT, AccessChangeError, OWN_ACCESS_REFUSAL, accessLevelOf, canManageAccess, setAccessAdmin, setGrants, targetRefusal, type Actor,
 } from "@/lib/accessChanges";
 import { publicId, type Viewer } from "@/lib/accessAdmin";
 import { nameBook, realName } from "@/lib/peopleNames";
+import { UNSAFE_TEXT_CHARS } from "@/lib/feedback";
 import { plainFull, plainOf, shortName } from "@/lib/plainNames";
 
 /**
@@ -84,11 +85,11 @@ export function ownerOnlyAsk(grantId: string): boolean {
   return grantId === ACCESS_ADMIN_GRANT || ownerDecides(grantId);
 }
 
-/** One line of text from a person: control characters and line breaks become spaces, trimmed, capped. */
+/** One line of text from a person: control characters, line breaks, zero-width marks and bidi overrides become spaces
+ *  (the same character class as the feedback note cleaner), trimmed, capped. */
 export function cleanLine(v: unknown, max = TEXT_MAX): string | null {
   if (typeof v !== "string") return null;
-  // eslint-disable-next-line no-control-regex
-  const s = v.replace(/[\u0000-\u001f\u007f-\u009f\u2028\u2029]+/g, " ").replace(/\s+/g, " ").trim().slice(0, max).trim();
+  const s = v.replace(UNSAFE_TEXT_CHARS, " ").replace(/\s+/g, " ").trim().slice(0, max).trim();
   return s || null;
 }
 
@@ -142,12 +143,28 @@ export async function deciders(): Promise<{ owner: string; all: string[] }> {
 }
 
 /** Does this person have the grant now (the one rule in lib/access.ts; the Access page = may manage access)? */
-async function hasNow(user: { id: string; discordId: string; isAdmin: boolean }, grantId: string): Promise<boolean> {
+async function hasNow(user: { id: string; discordId: string; isAdmin: boolean }, grantId: string, granted?: Set<string>): Promise<boolean> {
   if (grantId === ACCESS_ADMIN_GRANT) return canManageAccess({ discordId: user.discordId });
   return grantAllowed(grantId, {
     discordId: user.discordId, user: { discordId: user.discordId }, isAdmin: user.isAdmin || isOwner(user.discordId),
-    granted: await grantedIds(user.id),
+    granted: granted ?? (await grantedIds(user.id)),
   });
+}
+
+/** Open asks whose person already holds the grant (given by a toggle, not by Approve, or a crash after the grant was
+ *  saved): ids of those rows. Home ("N asked", Your asks) and the Requests list both leave them out (F9), so the badge
+ *  and the rows always come from the same answer. One grants query per person. */
+async function heldOpenAsks(rows: Row[], users: Map<string, { id: string; discordId: string; isAdmin: boolean }>): Promise<Set<string>> {
+  const held = new Set<string>();
+  const grants = new Map<string, Set<string>>();
+  for (const r of rows) {
+    if (r.state !== "open" && r.state !== "approving") continue;
+    const u = users.get(r.userId);
+    if (!u) continue;
+    if (!grants.has(u.id)) grants.set(u.id, await grantedIds(u.id));
+    if (await hasNow(u, r.grantId, grants.get(u.id))) held.add(r.id);
+  }
+  return held;
 }
 
 type Row = Prisma.AccessRequestGetPayload<object>;
@@ -216,14 +233,16 @@ export async function createAsk(discordId: string, grantId: unknown, reasonIn: u
 
 /** The person's own asks of the last 30 days, newest per grant first (Home). */
 export async function myAsks(discordId: string) {
-  const user = await prisma.user.findUnique({ where: { discordId }, select: { id: true } });
+  const user = await prisma.user.findUnique({ where: { discordId }, select: { id: true, discordId: true, isAdmin: true } });
   if (!user) return [];
   const rows = await prisma.accessRequest.findMany({
     where: { userId: user.id, createdAt: { gte: new Date(Date.now() - MY_ASKS_DAYS * DAY_MS) } },
     orderBy: { createdAt: "desc" }, take: 50,
   });
   const seen = new Set<string>();
-  return rows.filter((r) => !seen.has(r.grantId) && seen.add(r.grantId)).map((r) => ({
+  const latest = rows.filter((r) => !seen.has(r.grantId) && seen.add(r.grantId));
+  const held = await heldOpenAsks(latest, new Map([[user.id, user]]));
+  return latest.filter((r) => !held.has(r.id)).map((r) => ({
     grantId: r.grantId, name: plainFull(r.grantId),
     state: r.state === "approving" ? "open" : r.state,
     at: r.createdAt.toISOString(), answeredAt: r.decidedAt?.toISOString() ?? null, by: r.decidedByName, note: r.decisionNote,
@@ -235,7 +254,7 @@ function answerRefusal(viewer: Viewer, grantId: string, target: { discordId: str
   if (viewer.can !== "manage") return "read only";
   if (ownerOnlyAsk(grantId) && !viewer.isOwner) return `Only ${ownerName} can answer this one.`;
   const why = targetRefusal(viewer.actor, viewer.level, target);
-  if (why === "you may not change your own access") return "You cannot answer your own ask.";
+  if (why === OWN_ACCESS_REFUSAL) return "You cannot answer your own ask.";
   return why ? `Only ${ownerName} can answer this one.` : null;
 }
 
@@ -248,8 +267,9 @@ export async function requestsFor(viewer: Viewer) {
     prisma.accessRequest.findMany({ where: { state: { in: ["approved", "declined"] }, decidedAt: { gte: since } }, orderBy: { decidedAt: "desc" }, take: 40 }),
   ]);
   const rows = [...open, ...answered];
-  const users = rows.length ? await prisma.user.findMany({ where: { id: { in: [...new Set(rows.map((r) => r.userId))] } }, select: { id: true, discordId: true, username: true } }) : [];
+  const users = rows.length ? await prisma.user.findMany({ where: { id: { in: [...new Set(rows.map((r) => r.userId))] } }, select: { id: true, discordId: true, username: true, isAdmin: true } }) : [];
   const byId = new Map(users.map((u) => [u.id, u]));
+  const held = await heldOpenAsks(open, byId);
   const changeIds = answered.map((r) => r.changeId).filter((c): c is string => !!c);
   const undone = new Set(changeIds.length
     ? (await prisma.accessAudit.findMany({ where: { revertOf: { in: changeIds } }, select: { revertOf: true } })).map((r) => r.revertOf)
@@ -272,7 +292,7 @@ export async function requestsFor(viewer: Viewer) {
     };
   };
   const nonNull = <T,>(x: T | null): x is T => x !== null;
-  return { open: open.map(shape).filter(nonNull), answered: answered.map(shape).filter(nonNull) };
+  return { open: open.filter((r) => !held.has(r.id)).map(shape).filter(nonNull), answered: answered.map(shape).filter(nonNull) };
 }
 
 /** Number of asks waiting that this viewer can answer (Home badge on the Access link). */
@@ -281,6 +301,13 @@ export async function waitingFor(viewer: Viewer): Promise<number> {
   const { open } = await requestsFor(viewer);
   return open.filter((r) => r.canAnswer).length;
 }
+
+/** An "approving" claim older than this is treated as open again: the process that claimed it died (deploy, OOM)
+ *  before the final update, or the reset after a refusal failed (F2). setGrants is idempotent, so a second approve of a
+ *  grant that was already saved closes the ask with "already had it". */
+export const STALE_APPROVING_MS = 2 * 60_000;
+const staleClaim = (r: { state: string; decidedAt: Date | null }) =>
+  r.state === "approving" && (!r.decidedAt || Date.now() - r.decidedAt.getTime() > STALE_APPROVING_MS);
 
 /**
  * Approve or decline one ask. The ask is claimed first (open -> approving / declined, one row update, so two admins
@@ -295,7 +322,7 @@ export async function answerAsk(viewer: Viewer, id: unknown, action: unknown, no
   const note = cleanLine(noteIn);
   const req = await prisma.accessRequest.findUnique({ where: { id } });
   if (!req) throw new AccessChangeError("not_found", "no such ask");
-  if (req.state !== "open") throw new AccessChangeError("conflict", req.decidedByName ? `Already answered by ${req.decidedByName}.` : "Already answered.");
+  if (req.state !== "open" && !staleClaim(req)) throw new AccessChangeError("conflict", req.decidedByName ? `Already answered by ${req.decidedByName}.` : "Already answered.");
   const target = await prisma.user.findUnique({ where: { id: req.userId }, select: { id: true, discordId: true } });
   if (!target) throw new AccessChangeError("conflict", "This person is no longer in Portal.");
   const { owner } = await deciders();
@@ -306,7 +333,10 @@ export async function answerAsk(viewer: Viewer, id: unknown, action: unknown, no
   const byName = shortName(actor.username ?? "", realName(await nameBook(), { discordId: actor.discordId, username: actor.username ?? "" }));
   const decided = { decidedAt: new Date(), decidedBy: actor.discordId, decidedByName: byName, decisionNote: note };
   const claim = await prisma.accessRequest.updateMany({
-    where: { id, state: "open" },
+    where: {
+      id,
+      OR: [{ state: "open" }, { state: "approving", decidedAt: { lt: new Date(Date.now() - STALE_APPROVING_MS) } }, { state: "approving", decidedAt: null }],
+    },
     data: action === "decline" ? { state: "declined", openKey: null, ...decided } : { state: "approving", ...decided },
   });
   if (claim.count !== 1) throw new AccessChangeError("conflict", "Someone answered this ask a moment ago. Reload.");
@@ -314,17 +344,27 @@ export async function answerAsk(viewer: Viewer, id: unknown, action: unknown, no
     console.log("[access] ask declined", { id });
     return { state: "declined" as const, changeId: null };
   }
+  let r: { changeId: string | null };
   try {
-    const r = req.grantId === ACCESS_ADMIN_GRANT
+    r = req.grantId === ACCESS_ADMIN_GRANT
       ? await setAccessAdmin(actor, req.userId, true, note ? `ask approved: ${note}` : "ask approved")
       : await setGrants(actor, req.userId, [{ grantId: req.grantId, granted: true }], note ? `ask approved: ${note}` : "ask approved");
-    await prisma.accessRequest.update({ where: { id }, data: { state: "approved", openKey: null, changeId: r.changeId } });
-    console.log("[access] ask approved", { id, changeId: r.changeId });
-    return { state: "approved" as const, changeId: r.changeId };
   } catch (err) {
-    await prisma.accessRequest.update({
-      where: { id }, data: { state: "open", decidedAt: null, decidedBy: null, decidedByName: null, decisionNote: null },
+    // the change was refused or failed: nothing was granted, the ask goes back to open (if this reset fails too, the
+    // claim goes stale after STALE_APPROVING_MS and can be answered again)
+    await prisma.accessRequest.updateMany({
+      where: { id, state: "approving" }, data: { state: "open", decidedAt: null, decidedBy: null, decidedByName: null, decisionNote: null },
     }).catch(() => undefined);
     throw err;
   }
+  // The grant is saved (audited, Undo in History). If closing the ask fails, do NOT put it back to open: the person
+  // holds the grant, so Home and the Requests list leave the row out (heldOpenAsks), and the stale claim can be closed
+  // by a later answer. The Undo link still comes back to the approver.
+  try {
+    await prisma.accessRequest.update({ where: { id }, data: { state: "approved", openKey: null, changeId: r.changeId } });
+  } catch (err) {
+    console.error("[access] ask approved but not closed", { id, changeId: r.changeId, code: (err as { code?: string })?.code ?? "unknown" });
+  }
+  console.log("[access] ask approved", { id, changeId: r.changeId });
+  return { state: "approved" as const, changeId: r.changeId };
 }

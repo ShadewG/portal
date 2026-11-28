@@ -66,11 +66,14 @@ export async function accessLevelOf(actor: Actor | null | undefined): Promise<Le
   return (await authorityOf(actor)).level;
 }
 
+/** The refusal for changing your own access. Exported so callers compare with the constant, never with English text. */
+export const OWN_ACCESS_REFUSAL = "you may not change your own access";
+
 /** Why this actor may not change this target's grants (same rule as guardTarget), or null when they may. */
 export function targetRefusal(actor: Actor, level: Level, target: { discordId: string }): string | null {
   if (level === "owner") return null;
   if (isOwner(target.discordId)) return "only the owner may change the owner's access";
-  if (target.discordId === actor.discordId) return "you may not change your own access";
+  if (target.discordId === actor.discordId) return OWN_ACCESS_REFUSAL;
   return null;
 }
 
@@ -101,7 +104,7 @@ async function requireWriter(actor: Actor, grantIds: string[]): Promise<Authorit
 /** Target guards: nobody but the owner may change the owner's grants or their own. */
 function guardTarget(actor: Actor, auth: Authority, target: { id: string; discordId: string }) {
   const why = targetRefusal(actor, auth.level, target)
-    ?? (auth.level !== "owner" && auth.userId && target.id === auth.userId ? "you may not change your own access" : null);
+    ?? (auth.level !== "owner" && auth.userId && target.id === auth.userId ? OWN_ACCESS_REFUSAL : null);
   if (why) throw new AccessChangeError("forbidden", why);
 }
 

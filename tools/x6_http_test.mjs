@@ -214,6 +214,48 @@ try {
   check("member without Hiring: no tiles", JSON.stringify((await call(M, "GET", "/api/access/me")).json.tiles) === "[]");
   check("full Pulse holder: no extra Hiring tile", JSON.stringify((await call(S, "GET", "/api/access/me")).json.tiles) === "[]");
 
+  // ---- review fixes (Fable gate 1, 28 Nov) ----
+  // F6: bidi overrides and zero-width marks are stripped from the reason (same class as the feedback cleaner)
+  const pick = [];
+  for (const g of ["insanity-extension", "autobot", "foia-researcher"]) if (!(await rowOn(WISE, g))) pick.push(g);
+  const [g1, g2] = pick;
+  check("F setup: two apps the member does not hold", !!g1 && !!g2, pick.join(","));
+  const bidi = await ask(W, g1, "need \u202Eit\u202C for \u200Bscripts\u2066x\u2069");
+  const bRow = (await Q(`select id, reason from "AccessRequest" where "userId"=$1 and "grantId"=$2 and state='open'`, [WISE, g1]))[0];
+  check("F6: ask reason stored without bidi or zero-width characters", bidi.status === 200 && !!bRow && !/[\u200B-\u200F\u202A-\u202E\u2066-\u2069\uFEFF]/.test(bRow.reason ?? "") && bRow.reason.includes("scripts"), JSON.stringify(bRow?.reason ?? null));
+  // F2a: crash between the claim and the final update (row left "approving" 3 minutes ago, nothing granted)
+  await Q(`update "AccessRequest" set state='approving', "decidedAt"=now() - interval '3 minutes', "decidedBy"='crashed', "decidedByName"='Atom' where id=$1`, [bRow.id]);
+  check("F2: a stuck 'approving' ask still shows as open in the list", rowFor(await reqs(AT), "wisedumdum", g1)?.state === "open");
+  const st = await answer(AT, bRow.id, "approve");
+  check("F2: a stuck 'approving' ask older than 2 minutes can be approved again", st.status === 200 && st.json?.state === "approved" && !!st.json?.changeId && (await rowOn(WISE, g1)), `HTTP ${st.status} ${st.json?.error ?? ""}`);
+  check("F2: the row is closed (approved, openKey cleared)", (await Q(`select state, "openKey" from "AccessRequest" where id=$1`, [bRow.id]))[0].state === "approved");
+  check("F2: Undo of that approve", (await call(AT, "POST", "/api/access/admin/revert", { changeId: st.json?.changeId })).status === 200 && !(await rowOn(WISE, g1)));
+  // F2b: a claim of 30 seconds ago is someone else's answer in progress: 409, nothing written
+  await ask(W, g2, "");
+  const fRow = (await Q(`select id from "AccessRequest" where "userId"=$1 and "grantId"=$2 and state='open'`, [WISE, g2]))[0];
+  await Q(`update "AccessRequest" set state='approving', "decidedAt"=now() - interval '30 seconds', "decidedBy"='other', "decidedByName"='Ayoub' where id=$1`, [fRow.id]);
+  const fresh = await answer(AT, fRow.id, "approve");
+  check("F2: a fresh claim (30 s) stays protected: 409, nothing granted", fresh.status === 409 && !(await rowOn(WISE, g2)), `HTTP ${fresh.status}`);
+  const freshDecline = await answer(AT, fRow.id, "decline");
+  check("F2: decline of a fresh claim 409 too", freshDecline.status === 409);
+  // F2c + F9: crash after the grant was saved but before the ask closed (grant held, row stuck "approving")
+  await Q(`update "AccessRequest" set state='open', "decidedAt"=null, "decidedBy"=null, "decidedByName"=null where id=$1`, [fRow.id]);
+  const ok2 = await answer(AT, fRow.id, "approve");
+  await Q(`update "AccessRequest" set state='approving', "openKey"="userId" || '|' || "grantId", "changeId"=null, "decidedAt"=now() - interval '3 minutes' where id=$1`, [fRow.id]);
+  check("F9: open ask for a grant the person holds is left out of the Requests list", ok2.status === 200 && (await rowOn(WISE, g2)) && !(await reqs(AT)).open.some((r) => r.id === fRow.id));
+  const wme = (await call(W, "GET", "/api/access/me")).json;
+  check("F9: and out of the member's own open asks (badge and rows agree)", !wme.asks.some((a) => a.grantId === g2 && a.state === "open"));
+  const re = await answer(AT, fRow.id, "approve");
+  check("F2: approving the stuck row again closes it with no new change (already had it)", re.status === 200 && re.json?.state === "approved" && !re.json?.changeId
+    && (await Q(`select state from "AccessRequest" where id=$1`, [fRow.id]))[0].state === "approved", `HTTP ${re.status} ${re.json?.changeId ?? ""}`);
+  check("F2: Undo of the first approve still works", (await call(AT, "POST", "/api/access/admin/revert", { changeId: ok2.json?.changeId })).status === 200 && !(await rowOn(WISE, g2)));
+  // F6: decline note cleaned too
+  await ask(W, g1, "");
+  const nRow = rowFor(await reqs(AY), "wisedumdum", g1);
+  await answer(AY, nRow?.id, "decline", "not \u202Enow\u202C\u200B");
+  const note = (await Q(`select "decisionNote" from "AccessRequest" where id=$1`, [nRow?.id ?? ""]))[0]?.decisionNote ?? "";
+  check("F6: decline note stored without bidi or zero-width characters", note === "not now", JSON.stringify(note));
+
   // ---- limits ----
   const many = ["pulse", "script-reviewer", "insanity-extension", "foia-researcher", "autobot", "police-report-analyzer", "foia-sorter", "pulse.takedowns", "desk.production", "foia-sorter.distribution", "foia-sorter.patreon", "foia-sorter.podcast"];
   const outs = [];

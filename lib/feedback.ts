@@ -15,10 +15,14 @@ export const FEEDBACK_MAX_BODY = 2048;
 export const FEEDBACK_MIN = 3;
 export const FEEDBACK_MAX = 300;
 export const FEEDBACK_PAGES = new Set(["/", "/access"]);
+/** Characters removed from any line a person types: control characters, line/paragraph separators, zero-width marks
+ *  and bidi overrides/isolates (display spoofing). Shared with lib/accessRequests.ts cleanLine (ask reason, decline note). */
+// eslint-disable-next-line no-control-regex
+export const UNSAFE_TEXT_CHARS = /[\u0000-\u001f\u007f-\u009f\u200b-\u200f\u2028-\u202e\u2060-\u2069\ufeff]/g;
 
 export function cleanFeedbackText(v: unknown): string | null {
   if (typeof v !== "string") return null;
-  const t = v.replace(/[\u0000-\u001f\u007f-\u009f​-‏‪-‮⁦-⁩﻿]/g, " ").replace(/\s+/g, " ").trim();
+  const t = v.replace(UNSAFE_TEXT_CHARS, " ").replace(/\s+/g, " ").trim();
   return t.length >= FEEDBACK_MIN && t.length <= FEEDBACK_MAX ? t : null;
 }
 /** The sub-tab label shown on the page (e.g. "People", "History"): letters, digits, spaces, 40 max; else null. */

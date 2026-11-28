@@ -89,7 +89,9 @@ export default function Home() {
   const lockedIds = new Set(locked.map((a) => a.id));
   const askedElsewhere = asks.filter((a) => a.state === "open" && !lockedIds.has(a.grantId) && !access[a.grantId]);
   const rows = locked.length + askedElsewhere.length;
-  const openAsks = asks.filter((a) => a.state === "open").length;
+  // Badge = the "Asked" rows themselves (same source), so it can never count an ask that has no row (F9). The server
+  // already leaves out open asks for grants the person holds now (lib/accessRequests.ts heldOpenAsks).
+  const openAsks = locked.filter((a) => askOf.get(a.id)?.state === "open").length + askedElsewhere.length;
 
   return (
     <div className="pl pl-page">
