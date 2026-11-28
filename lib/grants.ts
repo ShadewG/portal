@@ -1,5 +1,6 @@
 import { allApps, type AppConfig } from "@/lib/apps";
 import { CASES_DASHBOARD_APP_ID } from "@/lib/casesAccess";
+import { plainOf } from "@/lib/plainNames";
 
 /**
  * Grant catalog (R-2159 M2). Every grant a person can hold, with a label and its parent app.
@@ -47,7 +48,7 @@ function appEffect(app: AppConfig): GrantEffect {
 
 const appGrants: GrantDef[] = allApps.map((app) => ({
   id: app.id,
-  label: app.name,
+  label: plainOf(app.id, app.name).name, // X6: plain names (FOIA Sorter, WorkStation, Training, Invoicing)
   app: app.id,
   kind: "app",
   enforced: app.requiresPortalAuth !== false,

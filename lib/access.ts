@@ -74,6 +74,14 @@ export function handoffAllowed(app: AppConfig, ctx: AccessContext): boolean {
   return tabsOf(app.id).some((t) => SHELL_TABS.has(t.id) && ctx.granted.has(t.id));
 }
 
+/** X6 (S4): shell tabs this person opens WITHOUT the app grant (today: pulse.hiring alone). Home shows each as its own
+ *  tile ("Hiring") that opens the app on that tab, so a one-tab person finds it. Same rule as handoffAllowed. */
+export function shellTabTiles(ctx: AccessContext): string[] {
+  return allApps
+    .filter((app) => !appAllowed(app, ctx))
+    .flatMap((app) => tabsOf(app.id).filter((t) => SHELL_TABS.has(t.id) && ctx.granted.has(t.id)).map((t) => t.id));
+}
+
 /** Granted AppAccess ids for one Portal user. */
 export async function grantedIds(userId: string): Promise<Set<string>> {
   if (!userId) return new Set();

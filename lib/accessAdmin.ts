@@ -42,7 +42,7 @@ export const notFound = () => json({ error: "Not found" }, 404);
  * CSRF check for every non-GET request: the Origin header must be the Portal's own origin (lib/portalOrigin.ts, or
  * AUTH_URL's origin) and the body must be declared JSON. A cross-site form or no-cors fetch cannot do both.
  */
-function refuseCrossSite(req: NextRequest): Response | null {
+export function refuseCrossSite(req: NextRequest): Response | null {
   if (req.method === "GET" || req.method === "HEAD") return null;
   const allowed = new Set<string>([portalOrigin(req)]);
   const configured = process.env.AUTH_URL ?? process.env.NEXTAUTH_URL;

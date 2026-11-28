@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { sections } from "@/lib/apps";
+import RequestsPanel from "./RequestsPanel";
 
 /**
  * /access dashboard (R-2159 M3). Client only renders and stages; every rule and every write is on the server
@@ -204,7 +205,7 @@ export default function AccessDashboard({ can, isOwner }: { can: Can; isOwner: b
       </nav>
       <main className="ax-main">
         {!manage && (
-          <Box kind="info">Read only. You can see who has what. Only Samuel and the access admins (Ayoub, Atom) change access.</Box>
+          <Box kind="info">Read only. You can see who has what. Only Samuel and the access admins (Ayoub, Atom) change access and answer requests.</Box>
         )}
         {loadError ? (
           <div className="ax-card" style={{ padding: 20 }}>
@@ -215,6 +216,9 @@ export default function AccessDashboard({ can, isOwner }: { can: Can; isOwner: b
           <div className="ax-card"><Empty>Loading access...</Empty></div>
         ) : (
           <>
+            {/* X6 (R-3258 B8): asks for access first, for everyone who can open this page */}
+            <RequestsPanel manage={manage} notify={setToast} onChanged={load}
+              openPerson={(id) => { setTab("people"); setSelectedId(id); }} />
             {(tab === "people" || tab === "matrix") && (
               <Filters q={q} setQ={setQ} filter={filter} setFilter={setFilter} catalog={state.catalog} count={filtered.length} total={people.length} />
             )}

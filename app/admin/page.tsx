@@ -175,9 +175,14 @@ export default function AdminPage() {
   }
 
   if (!isAdmin) {
+    // X6 (R-3258 B8): not a Portal admin = the one no-access page (it offers "Ask for access" or opens /access).
+    // A failed /api/me (error set) stays here with the error instead, so a network blip does not look like "no".
+    if (!error && typeof window !== "undefined") window.location.replace("/no-access?want=portal.access-admin");
     return (
       <div style={{ minHeight: "100vh", background: "var(--bg)", display: "flex", alignItems: "center", justifyContent: "center" }}>
-        <div style={{ color: "var(--red)", fontSize: 13 }}>Admin access required.</div>
+        <div style={{ color: error ? "var(--red)" : "var(--text-dim)", fontSize: 15, fontFamily: "system-ui, sans-serif" }}>
+          {error ? "This page could not load. Reload to try again." : "Opening..."}
+        </div>
       </div>
     );
   }

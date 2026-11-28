@@ -3,7 +3,7 @@ import { SessionProvider } from "next-auth/react";
 import "./globals.css";
 
 export const metadata: Metadata = {
-  title: "COMMAND CENTER",
+  title: "Home",
   description: "Unified portal for all services",
 };
 

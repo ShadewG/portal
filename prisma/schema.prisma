@@ -96,3 +96,25 @@ model AccessAudit {
   @@index([targetUserId, at])
   @@index([revertOf])
 }
+
+/// X6 (R-3258 B8, 28 Nov 2026): "Ask for access". One row per ask. state: "open", "approved", "declined".
+/// openKey = "<userId>|<grantId>" while open, null once answered: the unique index keeps one open ask per person and
+/// grant (Postgres allows many NULLs). Approve applies the grant through lib/accessChanges.ts setGrants (audited,
+/// changeId = that change, Undo in History). No foreign keys on purpose, like AccessAudit.
+model AccessRequest {
+  id            String    @id @default(cuid())
+  userId        String
+  grantId       String
+  reason        String?
+  state         String    @default("open")
+  openKey       String?   @unique
+  createdAt     DateTime  @default(now())
+  decidedAt     DateTime?
+  decidedBy     String?
+  decidedByName String?
+  decisionNote  String?
+  changeId      String?
+
+  @@index([state, createdAt])
+  @@index([userId, grantId, createdAt])
+}

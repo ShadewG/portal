@@ -71,6 +71,19 @@ function serverOnlyPage(origin: string, appId: string, username: string, check: 
   return new Response(html, { status: unsure ? 503 : 403, headers: { "Content-Type": "text/html; charset=utf-8", "Cache-Control": "no-store" } });
 }
 
+// X6 (R-3258 B8): every refusal shows the ONE no-access page (/no-access, "Ask for access"). The status stays 403 (same
+// answer for scripts and the X3 mirror); the browser goes on to the page at once. Same bounce as the Pulse gate.
+function noAccessBounce(origin: string, grantId: string) {
+  const to = `${origin}/no-access?want=${encodeURIComponent(grantId)}`;
+  const safe = escapeHtml(to);
+  const html =
+    `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="robots" content="noindex"><meta name="viewport" content="width=device-width,initial-scale=1">` +
+    `<meta http-equiv="refresh" content="0;url=${safe}"><title>No access</title></head>` +
+    `<body style="margin:0;background:#0a0a0f;color:#e8e8f0;font:15px/1.6 system-ui,sans-serif"><main style="max-width:560px;margin:0 auto;padding:10vh 16px">` +
+    `<h1 style="font-size:24px">This is not open for you yet</h1><p><a style="color:#a7b4ff" href="${safe}">Ask for access</a></p></main></body></html>`;
+  return new Response(html, { status: 403, headers: { "Content-Type": "text/html; charset=utf-8", "Cache-Control": "no-store" } });
+}
+
 function buildTargetUrl(baseUrl: string, handoffPath: string | undefined, next: string | null) {
   const targetUrl = new URL(baseUrl);
   const preservedNext = next ?? (handoffPath && targetUrl.pathname && targetUrl.pathname !== '/' ? `${targetUrl.pathname}${targetUrl.search}` : null);
@@ -146,12 +159,7 @@ export async function GET(req: NextRequest) {
   const hasAccess = handoffAllowed(app, { discordId, user, isAdmin, granted: await grantedIds(dbUser.id) });
 
   if (!hasAccess && appId === "desk") return teamOnlyPage(portalOrigin(req), username, team);
-  if (!hasAccess) {
-    return new Response("Access denied. Contact an admin to request access.", {
-      status: 403,
-      headers: { "Content-Type": "text/plain" },
-    });
-  }
+  if (!hasAccess) return noAccessBounce(portalOrigin(req), appId);
 
   if (app.signInOff) {
     return new Response(`${app.name} sign-in through Portal is not switched on yet. Use the link you had before.`, {

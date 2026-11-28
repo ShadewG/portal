@@ -18,7 +18,8 @@ export default auth((req: NextRequest & { auth?: unknown }) => {
 
   // Redirect unauthenticated users to login (skip API routes and login page itself)
   const { pathname } = req.nextUrl;
-  const isPublic = pathname.startsWith("/login") || pathname.startsWith("/api/") || pathname.startsWith("/status");
+  // X6: /no-access answers signed-out people itself ("Sign in" with the full return address, query included)
+  const isPublic = pathname.startsWith("/login") || pathname.startsWith("/api/") || pathname.startsWith("/status") || pathname === "/no-access";
   if (!isPublic && !req.auth) {
     const loginUrl = new URL("/login", req.url);
     loginUrl.searchParams.set("callbackUrl", pathname);

@@ -1,448 +1,163 @@
 "use client";
 
 import { useSession, signOut } from "next-auth/react";
-import {
-  sections,
-  appRequiresPortalAuth,
-  getAppEnvironment,
-  getAppHostname,
-  type AppConfig,
-  type AppSection,
-} from "@/lib/apps";
-import { useState, useEffect, useCallback } from "react";
+import { useCallback, useEffect, useState } from "react";
+import { sections, type AppConfig } from "@/lib/apps";
+import { plainOf } from "@/lib/plainNames";
+import "./plain.css";
 
-type AccessMap = Record<string, boolean>;
+/**
+ * Home (X6, R-3258 S4 + B8, 28 Nov 2026). The person's own apps first, as big tiles with a plain name and one line.
+ * Everything locked is folded under "N more apps: Ask for access"; each row leads to the one no-access page.
+ * A Hiring-only person (pulse.hiring without pulse) gets a "Hiring" tile that opens Pulse on that tab.
+ * No tech tags, web addresses or status dots on tiles (UX-PRINCIPLES v2.2 rules 3, 5, 6, 11, 12).
+ * An app whose Portal hand-off is off (signInOff, KPI until its gate is live) gets no tile at all (review N4).
+ */
 
-// An app whose Portal hand-off is not switched on yet (signInOff, e.g. KPI until its gate is live) gets no tile, so
-// nobody opens a "not switched on yet" page (review N4). Deleting signInOff in lib/apps.ts shows the tile again.
-const shownSections: AppSection[] = sections.map((s) => ({ ...s, apps: s.apps.filter((a) => !a.signInOff) }));
+interface Me { access: Record<string, boolean>; isAdmin: boolean; discordId?: string }
+interface Ask { grantId: string; name: string; state: string; at: string; answeredAt: string | null; by: string | null; note: string | null }
+interface Who { can: "manage" | "read" | null; waiting: number; asks: Ask[]; tiles: string[] }
 
-function StatusDot({ status }: { status: AppConfig["status"] }) {
-  return <span className={`status-dot status-${status}`} title={status} />;
-}
+const homeApps: AppConfig[] = sections.flatMap((s) => s.apps).filter((a) => !a.signInOff);
+const open = (app: string, next?: string) => `/api/auth/redirect?${new URLSearchParams(next ? { app, next } : { app }).toString()}`;
+const day = (iso: string | null) => (iso ? new Date(iso).toLocaleDateString("en-GB", { day: "numeric", month: "short", timeZone: "UTC" }) : "");
+const RECENT_MS = 14 * 86_400_000;
 
-function buildAppRedirectHref(app: AppConfig, returnTo?: string) {
-  const params = new URLSearchParams({ app: app.id });
-  if (returnTo) {
-    params.set("returnTo", returnTo);
-  }
-  return `/api/auth/redirect?${params.toString()}`;
-}
+/** Tiles for tabs a person opens without the app (lib/access.ts shellTabTiles). Today only Hiring in Pulse. */
+const TAB_TILES: Record<string, { icon: string; href: string }> = {
+  "pulse.hiring": { icon: "⌁", href: open("pulse", "/#hiring") },
+};
 
-function AppCard({
-  app,
-  hasAccess,
-  index,
-}: {
-  app: AppConfig;
-  hasAccess: boolean;
-  index: number;
-}) {
-  const openHref = hasAccess ? buildAppRedirectHref(app) : undefined;
-  const environment = getAppEnvironment(app);
-  const authMode = appRequiresPortalAuth(app) ? "portal handoff" : "public";
-  const hostname = getAppHostname(app);
-
+function Tile({ icon, name, line, href }: { icon: string; name: string; line: string; href: string }) {
   return (
-    <div
-      className={`card-hover animate-fade-in ${!hasAccess ? "locked" : ""}`}
-      style={{
-        border: "1px solid var(--border)",
-        background: hasAccess ? "var(--bg-surface)" : "var(--bg)",
-        padding: 20,
-        color: "inherit",
-        animationDelay: `${index * 50}ms`,
-        position: "relative",
-        overflow: "hidden",
-        opacity: hasAccess ? 1 : 0.4,
-        cursor: hasAccess ? "default" : "not-allowed",
-      }}
-    >
-      <div
-        style={{
-          position: "absolute",
-          top: 0,
-          left: 0,
-          right: 0,
-          height: 2,
-          background: app.color,
-          opacity: hasAccess ? 0.7 : 0.2,
-        }}
-      />
-      <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", marginBottom: 10 }}>
-        <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-          <span style={{ fontSize: 20 }}>{app.icon}</span>
-          <span
-            style={{
-              fontSize: 12,
-              fontWeight: 700,
-              letterSpacing: "0.08em",
-              textTransform: "uppercase",
-            }}
-          >
-            {app.name}
-          </span>
-        </div>
-        <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
-          {!hasAccess && (
-            <span style={{ fontSize: 9, color: "var(--text-muted)", letterSpacing: "0.1em", textTransform: "uppercase" }}>
-              Locked
-            </span>
-          )}
-          <StatusDot status={app.status} />
-        </div>
-      </div>
-      <p style={{ fontSize: 11, color: "var(--text-dim)", lineHeight: 1.5, margin: 0 }}>
-        {app.description}
-      </p>
-      <div style={{ display: "flex", flexWrap: "wrap", gap: 6, marginTop: 12 }}>
-        <span style={{ fontSize: 9, color: environment === "production" ? "var(--green)" : "var(--amber)", letterSpacing: "0.08em", textTransform: "uppercase" }}>
-          {environment}
-        </span>
-        <span style={{ fontSize: 9, color: "var(--text-muted)", letterSpacing: "0.08em", textTransform: "uppercase" }}>
-          {authMode}
-        </span>
-      </div>
-      <div style={{ marginTop: 8, fontSize: 10, color: "var(--text-muted)", fontFamily: "monospace", wordBreak: "break-all" }}>
-        {hostname}
-      </div>
-      <div style={{ display: "flex", gap: 8, marginTop: 14 }}>
-        {openHref ? (
-          <a
-            href={openHref}
-            style={{
-              flex: 1,
-              textAlign: "center",
-              padding: "8px 10px",
-              border: "1px solid var(--border)",
-              textDecoration: "none",
-              color: "var(--text)",
-              fontSize: 10,
-              fontWeight: 700,
-              letterSpacing: "0.08em",
-              textTransform: "uppercase",
-              background: "transparent",
-            }}
-          >
-            Open
-          </a>
-        ) : (
-          <div
-            style={{
-              flex: 1,
-              textAlign: "center",
-              padding: "8px 10px",
-              border: "1px solid var(--border)",
-              color: "var(--text-muted)",
-              fontSize: 10,
-              fontWeight: 700,
-              letterSpacing: "0.08em",
-              textTransform: "uppercase",
-            }}
-          >
-            Locked
-          </div>
-        )}
-      </div>
-    </div>
+    <a className="pl-tile" href={href} data-tile={name}>
+      <span className="pl-tile-icon" aria-hidden="true">{icon}</span>
+      <span style={{ minWidth: 0 }}>
+        <span className="pl-tile-name">{name}</span>
+        {line && <span className="pl-tile-line">{line}</span>}
+      </span>
+    </a>
   );
 }
 
-function SectionBlock({
-  section,
-  access,
-  startIndex,
-}: {
-  section: AppSection;
-  access: AccessMap;
-  startIndex: number;
-}) {
-  return (
-    <div style={{ marginBottom: 40 }}>
-      <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 16 }}>
-        <div style={{ width: 3, height: 20, background: section.color }} />
-        <h2
-          style={{
-            fontSize: 12,
-            fontWeight: 700,
-            letterSpacing: "0.15em",
-            textTransform: "uppercase",
-            margin: 0,
-            color: "var(--text)",
-          }}
-        >
-          {section.name}
-        </h2>
-        <span style={{ fontSize: 10, color: "var(--text-muted)" }}>{section.description}</span>
-      </div>
-      <div
-        style={{
-          display: "grid",
-          gridTemplateColumns: "repeat(auto-fill, minmax(280px, 1fr))",
-          gap: 12,
-        }}
-      >
-        {section.apps.map((app, i) => (
-          <AppCard key={app.id} app={app} hasAccess={access[app.id] ?? false} index={startIndex + i} />
-        ))}
-      </div>
-    </div>
-  );
+function askWords(a: Ask): string {
+  if (a.state === "approved") return `Given on ${day(a.answeredAt)}${a.by ? ` by ${a.by}` : ""}.`;
+  if (a.state === "declined") return `Declined on ${day(a.answeredAt)}${a.by ? ` by ${a.by}` : ""}.${a.note ? ` "${a.note}"` : ""}`;
+  return `Asked on ${day(a.at)}. Waiting for an answer.`;
 }
 
-export default function Dashboard() {
+export default function Home() {
   const { data: session } = useSession();
-  const [access, setAccess] = useState<AccessMap>({});
-  const [isAdmin, setIsAdmin] = useState(false);
-  // /access link (B4): shown to whoever may open the Access page (owner, access admins, Portal admins read only)
-  const [accessCan, setAccessCan] = useState<"manage" | "read" | null>(null);
-  const [loaded, setLoaded] = useState(false);
+  const [me, setMe] = useState<Me | null>(null);
+  const [who, setWho] = useState<Who | null>(null);
+  const [status, setStatus] = useState<"loading" | "ok" | "error">("loading");
 
-  const user = session?.user as
-    | { username?: string; globalName?: string; discordId?: string; avatar?: string; name?: string; isAdmin?: boolean }
-    | undefined;
+  const user = session?.user as { username?: string; globalName?: string; name?: string } | undefined;
+  const displayName = user?.globalName || user?.username || user?.name || "";
 
-  const displayName = user?.globalName || user?.username || user?.name || "Operator";
-  const avatarUrl =
-    user?.discordId && user?.avatar
-      ? `https://cdn.discordapp.com/avatars/${user.discordId}/${user.avatar}.png?size=64`
-      : undefined;
-
-  const loadAccess = useCallback(async () => {
+  const load = useCallback(async () => {
+    setStatus("loading");
     try {
-      const res = await fetch("/api/me");
-      if (res.ok) {
-        const data = await res.json();
-        setAccess(data.access ?? {});
-        setIsAdmin(data.isAdmin ?? false);
-        const who = await fetch("/api/access/me").then((r) => (r.ok ? r.json() : null)).catch(() => null);
-        setAccessCan(who?.can === "manage" || who?.can === "read" ? who.can : null);
-      } else {
-        console.error("[portal] /api/me failed:", res.status, await res.text().catch(() => ""));
-      }
-    } catch (err) {
-      console.error("[portal] /api/me error:", err);
-    } finally {
-      setLoaded(true);
+      const res = await fetch("/api/me", { cache: "no-store" });
+      if (!res.ok) throw new Error(String(res.status));
+      setMe(await res.json());
+      const w = await fetch("/api/access/me", { cache: "no-store" }).then((r) => (r.ok ? r.json() : null)).catch(() => null);
+      setWho(w ? { can: w.can ?? null, waiting: Number(w.waiting) || 0, asks: Array.isArray(w.asks) ? w.asks : [], tiles: Array.isArray(w.tiles) ? w.tiles : [] } : null);
+      setStatus("ok");
+    } catch {
+      setStatus("error");
     }
   }, []);
 
   useEffect(() => {
-    if (session?.user) loadAccess();
-  }, [session, loadAccess]);
+    if (session?.user) load();
+  }, [session, load]);
 
-  const accessibleCount = shownSections.reduce((n, s) => n + s.apps.filter((a) => access[a.id]).length, 0);
-  let idx = 0;
+  const access = me?.access ?? {};
+  const own = homeApps.filter((a) => access[a.id]);
+  const tabTiles = (who?.tiles ?? []).filter((id) => TAB_TILES[id]);
+  // personal apps (one named person) are never offered to anyone else
+  const locked = homeApps.filter((a) => !access[a.id] && !a.allowedDiscordId);
+  const asks = who?.asks ?? [];
+  const askOf = new Map(asks.map((a) => [a.grantId, a]));
+  const shownAsks = asks.filter((a) => a.state === "open" || Date.now() - Date.parse(a.answeredAt ?? a.at) < RECENT_MS);
+  const lockedAsked = locked.filter((a) => askOf.get(a.id)?.state === "open").length;
 
   return (
-    <div style={{ minHeight: "100vh", background: "var(--bg)" }}>
-      <header
-        style={{
-          borderBottom: "1px solid var(--border)",
-          padding: "14px clamp(14px, 4vw, 28px)",
-          display: "flex",
-          flexWrap: "wrap",
-          gap: "10px 16px",
-          alignItems: "center",
-          justifyContent: "space-between",
-        }}
-      >
-        <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
-          <span style={{ fontSize: 18 }}>⌘</span>
-          <h1
-            style={{
-              fontSize: 12,
-              fontWeight: 700,
-              letterSpacing: "0.15em",
-              textTransform: "uppercase",
-              margin: 0,
-            }}
-          >
-            Command Center
-          </h1>
-        </div>
-        <div style={{ display: "flex", flexWrap: "wrap", alignItems: "center", gap: "8px 14px" }}>
-          {isAdmin && (
-            <a
-              href="/renderfarm"
-              style={{
-                fontSize: 10,
-                fontWeight: 600,
-                letterSpacing: "0.1em",
-                textTransform: "uppercase",
-                padding: "5px 10px",
-                background: "transparent",
-                border: "1px solid var(--border)",
-                color: "var(--text-dim)",
-                textDecoration: "none",
-                fontFamily: "inherit",
-              }}
-            >
-              Render Farm
+    <div className="pl pl-page">
+      <header className="pl-top">
+        <h1 style={{ margin: 0, fontSize: 20 }}>Home</h1>
+        <nav aria-label="More">
+          {who?.can && (
+            <a className="pl-btn" href="/access" title={who.can === "manage" ? "Give and take access" : "See who has what (read only)"}>
+              {who.waiting > 0 ? `Access: ${who.waiting} ${who.waiting === 1 ? "ask" : "asks"} waiting` : "Access"}
             </a>
           )}
-          {isAdmin && (
-            <a
-              href="/usage"
-              style={{
-                fontSize: 10,
-                fontWeight: 600,
-                letterSpacing: "0.1em",
-                textTransform: "uppercase",
-                padding: "5px 10px",
-                background: "transparent",
-                border: "1px solid var(--border)",
-                color: "var(--text-dim)",
-                textDecoration: "none",
-                fontFamily: "inherit",
-              }}
-            >
-              Usage
-            </a>
-          )}
-          {isAdmin && (
-            <a
-              href="/status"
-              style={{
-                fontSize: 10,
-                fontWeight: 600,
-                letterSpacing: "0.1em",
-                textTransform: "uppercase",
-                padding: "5px 10px",
-                background: "transparent",
-                border: "1px solid var(--border)",
-                color: "var(--text-dim)",
-                textDecoration: "none",
-                fontFamily: "inherit",
-              }}
-            >
-              Status
-            </a>
-          )}
-          {accessCan && (
-            <a
-              href="/access"
-              title={accessCan === "manage" ? "Give and remove access" : "See who has what (read only)"}
-              style={{
-                fontSize: 10,
-                fontWeight: 600,
-                letterSpacing: "0.1em",
-                textTransform: "uppercase",
-                padding: "5px 10px",
-                background: "transparent",
-                border: "1px solid var(--amber)",
-                color: "var(--amber)",
-                textDecoration: "none",
-                fontFamily: "inherit",
-              }}
-            >
-              Access
-            </a>
-          )}
-          {isAdmin && (
-            <a
-              href="/admin"
-              style={{
-                fontSize: 10,
-                fontWeight: 600,
-                letterSpacing: "0.1em",
-                textTransform: "uppercase",
-                padding: "5px 10px",
-                background: "transparent",
-                border: "1px solid var(--amber)",
-                color: "var(--amber)",
-                textDecoration: "none",
-                fontFamily: "inherit",
-              }}
-            >
-              Admin
-            </a>
-          )}
-          <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-            {avatarUrl && (
-              <img
-                src={avatarUrl}
-                alt=""
-                width={22}
-                height={22}
-                style={{ borderRadius: "50%", border: "1px solid var(--border)" }}
-              />
-            )}
-            <span style={{ fontSize: 11, color: "var(--text-dim)" }}>{displayName}</span>
-          </div>
-          <button
-            onClick={() => signOut()}
-            style={{
-              fontSize: 10,
-              fontWeight: 600,
-              letterSpacing: "0.1em",
-              textTransform: "uppercase",
-              padding: "5px 10px",
-              background: "transparent",
-              border: "1px solid var(--border)",
-              color: "var(--text-dim)",
-              fontFamily: "inherit",
-              cursor: "pointer",
-            }}
-          >
-            Sign Out
-          </button>
-        </div>
+          {me?.isAdmin && <a className="pl-link" href="/admin" style={{ padding: "0 8px" }}>Admin</a>}
+          {me?.isAdmin && <a className="pl-link" href="/usage" style={{ padding: "0 8px" }}>Usage</a>}
+          {me?.isAdmin && <a className="pl-link" href="/status" style={{ padding: "0 8px" }}>Status</a>}
+          {displayName && <span className="pl-small" style={{ padding: "0 4px" }}>{displayName}</span>}
+          <button className="pl-btn" onClick={() => signOut()}>Sign out</button>
+        </nav>
       </header>
 
-      <main style={{ maxWidth: 1000, margin: "0 auto", padding: "32px 28px" }}>
-        {/* Stats */}
-        <div
-          style={{
-            display: "flex",
-            alignItems: "center",
-            gap: 20,
-            marginBottom: 32,
-            padding: "14px 18px",
-            border: "1px solid var(--border)",
-            background: "var(--bg-surface)",
-          }}
-        >
-          <div>
-            <div style={{ fontSize: 9, fontWeight: 600, letterSpacing: "0.15em", textTransform: "uppercase", color: "var(--text-muted)", marginBottom: 3 }}>
-              Sections
-            </div>
-            <div style={{ fontSize: 18, fontWeight: 700 }}>{sections.length}</div>
+      <main className="pl-wide">
+        <h2>Your apps</h2>
+        {status === "loading" && <p className="pl-dim" role="status">Loading your apps...</p>}
+        {status === "error" && (
+          <div className="pl-note pl-err" role="alert">
+            <p style={{ margin: "0 0 8px" }}>Your apps could not load.</p>
+            <button className="pl-btn" onClick={load}>Try again</button>
           </div>
-          <div style={{ width: 1, height: 28, background: "var(--border)" }} />
-          <div>
-            <div style={{ fontSize: 9, fontWeight: 600, letterSpacing: "0.15em", textTransform: "uppercase", color: "var(--text-muted)", marginBottom: 3 }}>
-              Your Access
-            </div>
-            <div style={{ fontSize: 18, fontWeight: 700, color: loaded ? "var(--green)" : "var(--text-dim)" }}>
-              {loaded ? accessibleCount : "..."}
-            </div>
-          </div>
-          <div style={{ width: 1, height: 28, background: "var(--border)" }} />
-          <div>
-            <div style={{ fontSize: 9, fontWeight: 600, letterSpacing: "0.15em", textTransform: "uppercase", color: "var(--text-muted)", marginBottom: 3 }}>
-              Role
-            </div>
-            <div
-              style={{
-                fontSize: 11,
-                fontWeight: 600,
-                color: isAdmin ? "var(--amber)" : "var(--text-dim)",
-              }}
-            >
-              {loaded ? (isAdmin ? "Admin" : "Member") : "..."}
-            </div>
-          </div>
-        </div>
+        )}
+        {status === "ok" && (
+          <>
+            {own.length + tabTiles.length === 0 ? (
+              <p className="pl-note">You have no apps yet. Open the list below and ask for the ones you need.</p>
+            ) : (
+              <div className="pl-tiles">
+                {tabTiles.map((id) => (
+                  <Tile key={id} icon={TAB_TILES[id].icon} name={plainOf(id).name} line={plainOf(id).line} href={TAB_TILES[id].href} />
+                ))}
+                {own.map((a) => <Tile key={a.id} icon={a.icon} name={plainOf(a.id, a.name).name} line={plainOf(a.id).line} href={open(a.id)} />)}
+              </div>
+            )}
 
-        {/* Sections */}
-        {shownSections.map((section) => {
-          const start = idx;
-          idx += section.apps.length;
-          return (
-            <SectionBlock key={section.id} section={section} access={access} startIndex={start} />
-          );
-        })}
+            {shownAsks.length > 0 && (
+              <section className="pl-card" style={{ marginBottom: 20 }} aria-label="Your asks">
+                <h2 style={{ fontSize: 15 }}>Your asks</h2>
+                {shownAsks.map((a) => (
+                  <p key={a.grantId} style={{ margin: "0 0 8px" }}>
+                    <b>{a.name}</b>: {askWords(a)}
+                  </p>
+                ))}
+              </section>
+            )}
+
+            {locked.length > 0 && (
+              <details className="pl-more">
+                <summary className="pl-sum">
+                  {locked.length} more {locked.length === 1 ? "app" : "apps"}: Ask for access
+                  {lockedAsked > 0 && <span className="pl-badge" style={{ marginLeft: "auto" }}>{lockedAsked} asked</span>}
+                </summary>
+                {locked.map((a) => {
+                  const asked = askOf.get(a.id);
+                  return (
+                    <div className="pl-locked" key={a.id}>
+                      <div>
+                        <span className="pl-tile-name">{plainOf(a.id, a.name).name}</span>
+                        <span className="pl-tile-line">{plainOf(a.id).line}</span>
+                      </div>
+                      {asked?.state === "open"
+                        ? <span className="pl-badge">Asked {day(asked.at)}</span>
+                        : <a className="pl-btn" href={`/no-access?want=${encodeURIComponent(a.id)}`}>Ask for access</a>}
+                    </div>
+                  );
+                })}
+              </details>
+            )}
+          </>
+        )}
       </main>
     </div>
   );
