@@ -4,7 +4,7 @@ import { prisma } from "@/lib/db";
 import { isPortalAdmin } from "@/lib/admin";
 import { accessErrorStatus, deletePendingGrant, setPendingGrant } from "@/lib/accessChanges";
 import { isOwner } from "@/lib/access";
-import { maskEmail } from "@/lib/accessAdmin";
+import { maskEmail, publicId } from "@/lib/accessAdmin";
 
 // Pre-grants by email. Portal admins may list them (emails masked unless owner); changes go through
 // lib/accessChanges.ts (catalog check + audit): the owner and access admins only (X3, 28 Nov 2026).
@@ -28,7 +28,10 @@ export async function GET() {
     orderBy: { createdAt: "desc" },
   });
   const owner = isOwner((session?.user as Record<string, unknown> | undefined)?.discordId);
-  return Response.json(owner ? pending : pending.map((p) => ({ ...p, email: maskEmail(p.email), grantedBy: null })));
+  return Response.json(owner ? pending : pending.map((p) => ({
+    ...p, email: maskEmail(p.email), grantedBy: null,
+    resolvedUserId: p.resolvedUserId ? publicId({ isOwner: false }, p.resolvedUserId) : null,
+  })));
 }
 
 export async function POST(req: NextRequest) {

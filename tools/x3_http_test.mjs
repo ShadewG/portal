@@ -94,6 +94,33 @@ try {
   check("Ayoub: undo through /access", (await call(AY, "POST", "/api/access/admin/revert", { changeId: p1.json?.changeId })).status === 200 && !(await rowOn(WISE, "patreon")));
   check("Ayoub: naming an access admin refused (owner only)", (await call(AY, "POST", "/api/access/admin/admins", { userId: WISE, on: true })).status === 403);
 
+  // ---- review fixes (28 Nov) ----
+  // S1: Ayoub (access admin + Portal admin) may not pre-grant to his own email; a new email still works
+  const ayEmail = (await Q(`select email from "User" where username='ayoub_prods'`))[0]?.email;
+  const pBefore = (await Q(`select count(*)::int n from "PendingAppAccess"`))[0].n;
+  const selfPre = await call(AY, "POST", "/api/admin/pending-access", { email: ayEmail, appId: "renderfarm", granted: true });
+  check("S1 Ayoub: self pre-grant 403", !!ayEmail && selfPre.status === 403, selfPre.json?.error);
+  const newEmail = `x3-s1-${Date.now()}@example.test`;
+  const okPre = await call(AY, "POST", "/api/admin/pending-access", { email: newEmail, appId: "renderfarm", granted: true });
+  check("S1 Ayoub: pre-grant for a new email 200", okPre.status === 200);
+  check("S1 Ayoub: delete that pre-grant 200", (await call(AY, "DELETE", "/api/admin/pending-access", { email: newEmail, appId: "renderfarm" })).status === 200
+    && (await Q(`select count(*)::int n from "PendingAppAccess"`))[0].n === pBefore);
+  // N1: no Discord id inside any user id for non-owners; PATCH still works with the opaque ref
+  check("N1 Harald: /api/admin ids carry no Discord id", ha.json.every((u) => !/\d{15,}/.test(u.id)), `${ha.json.filter((u) => /\d{15,}/.test(u.id)).length} with`);
+  const ay = (await call(AY, "GET", "/api/admin")).json;
+  const refRow = ay.find((u) => u.id.startsWith("u_") && u.username !== "ayoub_prods");
+  check("N1 owner: /api/admin keeps real ids", so.json.some((u) => /^portal_\d{15,}$/.test(u.id)));
+  if (refRow) {
+    const target = (await Q(`select id from "User" where username=$1`, [refRow.username]))[0].id;
+    const had = await rowOn(target, "pulse.takedowns");
+    const pr = await call(AY, "PATCH", "/api/admin", { userId: refRow.id, appId: "pulse.takedowns", granted: !had });
+    check("N1 Ayoub: PATCH with an opaque ref reaches the right person", pr.status === 200 && (await rowOn(target, "pulse.takedowns")) === !had, pr.json?.error);
+    check("N1 Ayoub: undo", (await call(AY, "POST", "/api/access/admin/revert", { changeId: pr.json?.changeId })).status === 200 && (await rowOn(target, "pulse.takedowns")) === had);
+  } else check("N1: a user with a ref exists for Ayoub", false);
+  // N4: no KPI tile while its hand-off is off (Home is server-rendered with the tile list)
+  const homeHtml = (await call(ED, "GET", "/")).text;
+  check("N4: Home has no KPI tile while signInOff", homeHtml.length > 1000 && !homeHtml.includes("kpi.insanity.team") && homeHtml.includes("pulse.insanity.team"));
+
   // ---- B4: names, effect, hidden toggles ----
   const st = (await call(S, "GET", "/api/access/admin")).json;
   const named = st.people.filter((p) => p.name).length;

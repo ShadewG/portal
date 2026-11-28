@@ -76,7 +76,7 @@ const refOf = (id: string) =>
   "u_" + createHmac("sha256", process.env.AUTH_SECRET ?? process.env.NEXTAUTH_SECRET ?? "access-ref").update(id).digest("hex").slice(0, 24);
 
 /** The user id as this viewer may see it: unchanged for the owner and for ids without a Discord id in them. */
-export function publicId(viewer: Viewer, id: string): string {
+export function publicId(viewer: Pick<Viewer, "isOwner">, id: string): string {
   return viewer.isOwner || !HAS_DISCORD_ID.test(id) ? id : refOf(id);
 }
 

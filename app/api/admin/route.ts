@@ -5,10 +5,11 @@ import { isPortalAdmin } from "@/lib/admin";
 import { allApps } from "@/lib/apps";
 import { accessErrorStatus, setGrants } from "@/lib/accessChanges";
 import { isOwner } from "@/lib/access";
-import { maskEmail } from "@/lib/accessAdmin";
+import { maskEmail, publicId, userIdOf } from "@/lib/accessAdmin";
 
 /** GET /api/admin: list all users with their access. Portal admins (read). Emails, Discord ids and avatars go to the
- *  owner only (same privacy rule as /access, R-2159 M3): others get a masked email, discordId "" and avatar null. */
+ *  owner only (same privacy rule as /access, R-2159 M3): others get a masked email, discordId "" and avatar null, and
+ *  user ids that carry a Discord id come as opaque refs (publicId, review N1; PATCH resolves them). */
 export async function GET() {
   const session = await auth();
   if (!(await isPortalAdmin(session))) {
@@ -22,7 +23,7 @@ export async function GET() {
   });
 
   const result = users.map((u) => ({
-    id: u.id,
+    id: publicId({ isOwner: owner }, u.id),
     discordId: owner ? u.discordId : "",
     username: u.username,
     avatar: owner ? u.avatar : null,
@@ -49,7 +50,8 @@ export async function PATCH(req: NextRequest) {
   }
 
   const body = await req.json().catch(() => null);
-  const { userId, appId, granted } = (body ?? {}) as { userId?: unknown; appId?: unknown; granted?: unknown };
+  const { appId, granted } = (body ?? {}) as { appId?: unknown; granted?: unknown };
+  const userId = await userIdOf((body as { userId?: unknown } | null)?.userId);
   if (!userId || typeof userId !== "string" || !appId || typeof appId !== "string" || typeof granted !== "boolean") {
     return Response.json({ error: "Invalid payload" }, { status: 400 });
   }
