@@ -12,7 +12,7 @@ type Can = "manage" | "read";
 type Effect = "now" | "next-sign-in" | "tile-only" | "none";
 interface Grant {
   id: string; label: string; full: string; app: string; kind: "app" | "tab"; enforced: boolean;
-  ownerOnly: boolean; effect: Effect; note: string | null;
+  ownerOnly: boolean; effect: Effect; note: string | null; toggleNote?: string | null;
 }
 interface Person {
   id: string; username: string; name: string | null; avatarUrl: string | null; isOwner: boolean; isAdmin: boolean; isAccessAdmin: boolean;
@@ -406,6 +406,9 @@ function PersonDetail({ state, person, manage, onSaved, onBack, showHistory }: {
             <span style={{ display: "block", fontSize: 10, fontWeight: 400, color: "var(--text-muted)", marginTop: 2 }}>
               Comes with it: {state.pulseIncluded.join(", ")}
             </span>
+          )}
+          {g.toggleNote && (
+            <span style={{ display: "block", fontSize: 10, fontWeight: 400, color: "var(--amber)", marginTop: 2 }}>{g.toggleNote}</span>
           )}
         </span>
         <span style={{ display: "inline-flex", flexWrap: "wrap", gap: 4, justifyContent: "flex-end" }}>

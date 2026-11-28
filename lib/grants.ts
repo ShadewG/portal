@@ -30,6 +30,8 @@ export interface GrantDef {
   ownerOnly: boolean;
   effect: GrantEffect;
   note?: string;
+  /** Shown under the label in the person's toggle list: what has to be true for the grant to do anything. */
+  toggleNote?: string;
 }
 
 /** Apps that ask Portal on every request (forward_auth or Portal's own pages), so a change applies at once. */
@@ -60,8 +62,10 @@ const appGrants: GrantDef[] = allApps.map((app) => ({
 // Known tabs and areas (inventory/apps.md, 23 Nov 2026). Add one line per tab; the parent must be an app id above.
 // Labels are plain words (B4): the page shows them under their app, so "Hiring", not "Pulse: Hiring".
 const tabGrants: GrantDef[] = ([
-  { id: "pulse.hiring", label: "Hiring", app: "pulse", kind: "tab", enforced: false,
-    note: "Live gate today: /opt/hiring-desk allowed.json (Samuel only)." },
+  // R-3258 X5 B review P8: what the grant does since B5. The full board stays on allowed.json (Samuel only).
+  { id: "pulse.hiring", label: "Hiring (reviewers see only their own trials)", app: "pulse", kind: "tab", enforced: false,
+    note: "Full board: /opt/hiring-desk allowed.json (Samuel only). This grant opens only a named reviewer's own trials, and only while HIRING_PORTAL_GRANTS=1 is set on the hiring desk.",
+    toggleNote: "Does nothing until the switch HIRING_PORTAL_GRANTS is on, and only for people the hub names as reviewers." },
   { id: "pulse.servers", label: "Servers", app: "pulse", kind: "tab", enforced: false,
     note: "Live gate today: /opt/server-pulse/gate.py hardcoded pair (Samuel)." },
   { id: "pulse.takedowns", label: "Takedowns", app: "pulse", kind: "tab", enforced: false,

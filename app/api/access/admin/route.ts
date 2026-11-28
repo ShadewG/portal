@@ -13,7 +13,7 @@ export async function GET(req: NextRequest) {
       viewer: { can: v.can, isOwner: v.isOwner, name: v.actor.username },
       catalog: grantCatalog.map((g) => ({
         id: g.id, label: g.label, full: fullLabel(g), app: g.app, kind: g.kind, enforced: g.enforced,
-        ownerOnly: g.ownerOnly, effect: g.effect, note: g.note ?? null,
+        ownerOnly: g.ownerOnly, effect: g.effect, note: g.note ?? null, toggleNote: g.toggleNote ?? null,
       })),
       pulseIncluded: PULSE_INCLUDED_TABS,
       baseline: baselineSees(),

@@ -131,7 +131,8 @@ try {
     cat.pulse.effect === "now" && cat.desk.effect === "now" && cat["foia-sorter"].effect === "next-sign-in" && cat.invoicing.effect === "tile-only");
   check("B4: no-op toggles marked none (Training, Video Review, Cases, KPI before switch, tabs not enforced)",
     ["insanity-courses", "video-review", "cases-dashboard", "kpi", "pulse.servers"].every((g) => cat[g].effect === "none"));
-  check("B4: plain tab labels with full labels for lists", cat["pulse.hiring"].label === "Hiring" && cat["pulse.hiring"].full === "Pulse: Hiring");
+  check("B4: plain tab labels with full labels for lists", cat["pulse.servers"].label === "Servers" && cat["pulse.servers"].full === "Pulse: Servers");
+  check("P8: the Hiring grant says what it opens and needs the switch", cat["pulse.hiring"].full === "Pulse: Hiring (reviewers see only their own trials)" && /HIRING_PORTAL_GRANTS/.test(cat["pulse.hiring"].toggleNote || ""));
   check("B4: owner-only flags", cat["pulse.hiring"].ownerOnly && cat["pulse.servers"].ownerOnly && cat["cases-dashboard"].ownerOnly && !cat.kpi.ownerOnly);
   check("B4: Pulse includes Production, Stuck cases, Patreon, FOIA cases", JSON.stringify(st.pulseIncluded) === JSON.stringify(["Production", "Stuck cases", "Patreon", "FOIA cases"]));
   const home = await call(S, "GET", "/");
