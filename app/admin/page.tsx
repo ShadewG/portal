@@ -38,6 +38,9 @@ export default function AdminPage() {
   const [toggling, setToggling] = useState<string | null>(null);
   const [pendingSubmitting, setPendingSubmitting] = useState(false);
   const [isAdmin, setIsAdmin] = useState<boolean | null>(null);
+  // X3 (28 Nov 2026): only the owner and access admins change access; other Portal admins see this page read only.
+  // The server refuses their writes anyway (403); this only hides the buttons.
+  const [canManage, setCanManage] = useState(false);
 
   const loadAdminStatus = useCallback(async () => {
     try {
@@ -45,6 +48,8 @@ export default function AdminPage() {
       if (!res.ok) throw new Error("Failed to load current user");
       const data = await res.json();
       setIsAdmin(Boolean(data?.isAdmin));
+      const who = await fetch("/api/access/me").then((r) => (r.ok ? r.json() : null)).catch(() => null);
+      setCanManage(who?.can === "manage");
       return Boolean(data?.isAdmin);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Unknown error");
@@ -109,7 +114,10 @@ export default function AdminPage() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ userId, appId, granted: !currentlyGranted }),
       });
-      if (res.ok) {
+      if (!res.ok) {
+        const body = await res.json().catch(() => null);
+        setError(`Not changed: ${body?.error ?? `HTTP ${res.status}`}`);
+      } else {
         setUsers((prev) =>
           prev.map((u) =>
             u.id === userId ? { ...u, access: { ...u.access, [appId]: !currentlyGranted } } : u
@@ -144,12 +152,12 @@ export default function AdminPage() {
     }
   };
 
-  const removePending = async (email: string, appId: string) => {
+  const removePending = async (id: string) => {
     try {
       const res = await fetch("/api/admin/pending-access", {
         method: "DELETE",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ email, appId }),
+        body: JSON.stringify({ id }),
       });
       if (!res.ok) throw new Error("Failed to remove pending access");
       await loadPending();
@@ -207,6 +215,12 @@ export default function AdminPage() {
             {error}
           </div>
         )}
+        {!canManage && (
+          <div role="note" style={{ padding: 12, border: "1px solid var(--border)", color: "var(--text-dim)", marginBottom: 24, fontSize: 12, lineHeight: 1.6 }}>
+            Read only. You can see who has what. Only Samuel and the access admins change access, on the{" "}
+            <a href="/access" style={{ color: "var(--amber)" }}>Access page</a>.
+          </div>
+        )}
 
         <div style={{ marginBottom: 32, padding: 16, border: "1px solid var(--border)", background: "var(--bg-surface)" }}>
           <div style={{ fontSize: 10, fontWeight: 600, letterSpacing: "0.1em", textTransform: "uppercase", color: "var(--text-muted)", marginBottom: 12 }}>
@@ -217,7 +231,7 @@ export default function AdminPage() {
               {pendingError}
             </div>
           )}
-          <div style={{ display: "flex", flexWrap: "wrap", gap: 8, marginBottom: 12 }}>
+          {canManage && <div style={{ display: "flex", flexWrap: "wrap", gap: 8, marginBottom: 12 }}>
             <input
               value={pendingEmail}
               onChange={(e) => setPendingEmail(e.target.value)}
@@ -283,7 +297,7 @@ export default function AdminPage() {
             >
               Save
             </button>
-          </div>
+          </div>}
           {pendingLoading ? (
             <div style={{ color: "var(--text-dim)", fontSize: 11 }}>Loading pending access...</div>
           ) : pending.length === 0 ? (
@@ -306,8 +320,8 @@ export default function AdminPage() {
                   <div style={{ color: "var(--text-dim)" }}>
                     {row.email} · {row.appId} · {row.granted ? "granted" : "revoked"}
                   </div>
-                  <button
-                    onClick={() => removePending(row.email, row.appId)}
+                  {canManage && <button
+                    onClick={() => removePending(row.id)}
                     style={{
                       border: "1px solid var(--border)",
                       background: "transparent",
@@ -319,7 +333,7 @@ export default function AdminPage() {
                     }}
                   >
                     Remove
-                  </button>
+                  </button>}
                 </div>
               ))}
             </div>
@@ -425,7 +439,11 @@ export default function AdminPage() {
                       const isToggling = toggling === key;
                       return (
                         <td key={app.id} style={{ ...tdStyle, textAlign: "center" }}>
-                          {implicitAdmin ? (
+                          {!canManage && !implicitAdmin ? (
+                            <span style={{ color: granted ? "var(--green)" : "var(--text-muted)", fontSize: 14 }} title={granted ? "Has access" : "No access"}>
+                              {granted ? "✓" : "×"}
+                            </span>
+                          ) : implicitAdmin ? (
                             <span style={{ color: "var(--amber)", fontSize: 14 }} title="Admin (full access)">
                               ★
                             </span>
@@ -464,7 +482,8 @@ export default function AdminPage() {
           </div>
           <ul style={{ fontSize: 11, color: "var(--text-dim)", lineHeight: 1.8, margin: 0, paddingLeft: 16 }}>
             <li>New users appear after their first Discord sign-in. Default access: <strong style={{ color: "var(--red)" }}>none</strong>.</li>
-            <li>Click a cell to grant/revoke access to a specific tool.</li>
+            {canManage ? <li>Click a cell to grant/revoke access to a specific tool. Every change is recorded on the Access page, with Undo.</li>
+              : <li>Read only: only Samuel and the access admins change access.</li>}
             <li>Admins (★) have access to all tools automatically.</li>
             <li>Apps marked &quot;Public&quot; skip portal auth and access checks.</li>
             <li>Access is enforced on redirect — users without access see &quot;Locked&quot; cards.</li>

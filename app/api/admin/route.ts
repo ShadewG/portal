@@ -4,13 +4,17 @@ import { prisma } from "@/lib/db";
 import { isPortalAdmin } from "@/lib/admin";
 import { allApps } from "@/lib/apps";
 import { accessErrorStatus, setGrants } from "@/lib/accessChanges";
+import { isOwner } from "@/lib/access";
+import { maskEmail } from "@/lib/accessAdmin";
 
-/** GET /api/admin — list all users with their access */
+/** GET /api/admin: list all users with their access. Portal admins (read). Emails, Discord ids and avatars go to the
+ *  owner only (same privacy rule as /access, R-2159 M3): others get a masked email, discordId "" and avatar null. */
 export async function GET() {
   const session = await auth();
   if (!(await isPortalAdmin(session))) {
     return Response.json({ error: "Forbidden" }, { status: 403 });
   }
+  const owner = isOwner((session?.user as Record<string, unknown> | undefined)?.discordId);
 
   const users = await prisma.user.findMany({
     include: { access: true },
@@ -19,10 +23,10 @@ export async function GET() {
 
   const result = users.map((u) => ({
     id: u.id,
-    discordId: u.discordId,
+    discordId: owner ? u.discordId : "",
     username: u.username,
-    avatar: u.avatar,
-    email: u.email,
+    avatar: owner ? u.avatar : null,
+    email: owner || !u.email ? u.email : maskEmail(u.email),
     isAdmin: u.isAdmin,
     createdAt: u.createdAt,
     access: Object.fromEntries(
@@ -36,9 +40,8 @@ export async function GET() {
   return Response.json(result);
 }
 
-/** PATCH /api/admin: toggle access: { userId, appId, granted }
- *  Any Portal admin, as before, for app grants; through lib/accessChanges.ts setGrants (catalog check + audit).
- *  Tab grants (dotted ids) need the owner or an access admin; nobody but the owner changes the owner's or their own. */
+/** PATCH /api/admin: toggle access: { userId, appId, granted }. Through lib/accessChanges.ts setGrants (catalog check
+ *  + audit): the owner and access admins only (X3, 28 Nov 2026); other Portal admins get 403 "look but not change". */
 export async function PATCH(req: NextRequest) {
   const session = await auth();
   if (!(await isPortalAdmin(session))) {
@@ -54,7 +57,7 @@ export async function PATCH(req: NextRequest) {
   const sessionUser = session?.user as Record<string, unknown> | undefined;
   const actor = { discordId: String(sessionUser?.discordId ?? ""), username: (sessionUser?.username as string) ?? null };
   try {
-    const result = await setGrants(actor, userId, [{ grantId: appId, granted }], "admin page", { allowPortalAdmin: true });
+    const result = await setGrants(actor, userId, [{ grantId: appId, granted }], "admin page");
     return Response.json({ ok: true, changeId: result.changeId });
   } catch (err) {
     const status = accessErrorStatus(err);

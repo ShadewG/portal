@@ -10,10 +10,10 @@ import { isOwner } from "@/lib/access";
  * Only the owner (ADMIN_DISCORD_ID) and named access admins (User.isAccessAdmin) may change grants; only the owner
  * may name access admins. Checked here, server-side, on every call, fail closed. UI: /access (M3).
  *
- * Exception kept from before M2 (needs Samuel's OK to tighten): the old /admin tick boxes (PATCH /api/admin and
- * /api/admin/pending-access) still let any Portal admin (User.isAdmin) change APP grants. They now come through here
- * too (catalog check + audit). Tab grants (dotted ids like pulse.hiring) always need the owner or an access admin.
- * Target guards (everyone but the owner): never the owner's grants, never your own.
+ * X3 (Samuel, 28 Nov 2026): the old /admin routes (PATCH /api/admin, /api/admin/pending-access) follow the same rule:
+ * Portal admins who are not access admins may look but not change anything (the M2 exception for them is gone).
+ * Owner-only grants (lib/grants.ts ownerOnly: full Hiring board, Servers, investor Cases dashboard) and naming access
+ * admins: the owner only. Target guards (everyone but the owner): never the owner's grants, never your own.
  * Logs carry internal user ids only (never Discord ids, emails or what the caller typed).
  */
 
@@ -88,20 +88,14 @@ async function requireManager(actor: Actor): Promise<Authority> {
   return auth;
 }
 
-/**
- * Who may write these grants. Owner and access admins: any catalog grant. A Portal admin: app grants only, and only
- * when the caller is one of the old /admin routes (allowPortalAdmin). Everyone else: refused.
- */
-async function requireWriter(actor: Actor, grantIds: string[], allowPortalAdmin: boolean): Promise<Authority> {
-  const auth = await authorityOf(actor);
-  if (auth.level === "owner" || auth.level === "access-admin") return auth;
-  if (auth.level === "portal-admin" && allowPortalAdmin) {
-    if (grantIds.some((id) => getGrant(id)?.kind !== "app")) {
-      throw new AccessChangeError("forbidden", "tab grants need the owner or an access admin");
-    }
-    return auth;
+/** Who may write these grants: the owner (any catalog grant) or an access admin (any grant that is not owner-only).
+ *  Everyone else, Portal admins included, is refused. */
+async function requireWriter(actor: Actor, grantIds: string[]): Promise<Authority> {
+  const auth = await requireManager(actor);
+  if (auth.level !== "owner" && grantIds.some((id) => getGrant(id)?.ownerOnly)) {
+    throw new AccessChangeError("forbidden", "only the owner may change this grant");
   }
-  throw new AccessChangeError("forbidden", "only the owner or an access admin may change access");
+  return auth;
 }
 
 /** Target guards: nobody but the owner may change the owner's grants or their own. */
@@ -161,19 +155,17 @@ export async function writeGrantChanges(
 
 /**
  * Change one person's grants. Unknown grant ids are refused (nothing is written). No-op changes are skipped.
- * opts.allowPortalAdmin: only for the old /admin routes (Portal admins keep app-grant rights, see the header).
  */
 export async function setGrants(
   actor: Actor,
   userId: string,
   changes: GrantChange[],
   note?: string | null,
-  opts: { allowPortalAdmin?: boolean } = {},
 ): Promise<ChangeResult> {
   if (!userId || typeof userId !== "string" || !Array.isArray(changes) || changes.length === 0) {
     throw new AccessChangeError("bad_request", "userId and changes are required");
   }
-  const result = await setGrantsMany(actor, [{ userId, changes }], note, opts);
+  const result = await setGrantsMany(actor, [{ userId, changes }], note);
   return { changeId: result.changeId, applied: result.people[0]?.applied ?? [] };
 }
 
@@ -223,14 +215,9 @@ export function checkBatchShape(items: unknown, opts: { requireExpect?: boolean 
  * undoes the whole batch. Same rules as setGrants for every person in it (catalog, writer rights, target guards).
  * All or nothing: any refusal writes nothing.
  */
-export async function setGrantsMany(
-  actor: Actor,
-  items: BatchItem[],
-  note?: string | null,
-  opts: { allowPortalAdmin?: boolean } = {},
-): Promise<BatchResult> {
+export async function setGrantsMany(actor: Actor, items: BatchItem[], note?: string | null): Promise<BatchResult> {
   const grantIds = checkBatchShape(items);
-  const auth = await requireWriter(actor, [...grantIds], opts.allowPortalAdmin === true);
+  const auth = await requireWriter(actor, [...grantIds]);
   const changeId = randomUUID();
   const result = await prisma.$transaction(async (tx) => {
     const out: BatchResult["people"] = [];
@@ -262,18 +249,12 @@ const pendingTarget = (pendingId: string) => `pending:${pendingId}`;
 
 /**
  * Create or change a pre-grant by email (PendingAppAccess), catalog-checked and audited (targetUserId pending:<row id>).
- * Same rights as setGrants: owner/access admin any grant, Portal admin (old /admin route) app grants only.
+ * Same rights as setGrants.
  */
-export async function setPendingGrant(
-  actor: Actor,
-  email: string,
-  grantId: string,
-  granted: boolean,
-  opts: { allowPortalAdmin?: boolean } = {},
-): Promise<ChangeResult> {
+export async function setPendingGrant(actor: Actor, email: string, grantId: string, granted: boolean): Promise<ChangeResult> {
   if (!email || typeof email !== "string" || typeof granted !== "boolean") throw new AccessChangeError("bad_request", "email, appId and granted are required");
   if (!isKnownGrant(grantId)) throw new AccessChangeError("bad_request", "unknown grant");
-  const auth = await requireWriter(actor, [grantId], opts.allowPortalAdmin === true);
+  const auth = await requireWriter(actor, [grantId]);
   const result = await prisma.$transaction(async (tx) => {
     const before = await tx.pendingAppAccess.findUnique({ where: { email_appId: { email, appId: grantId } } });
     const oldState = stateOf(before);
@@ -295,23 +276,10 @@ export async function setPendingGrant(
   return result;
 }
 
-/** Delete a pre-grant by email. Audited. Unknown ids may be deleted (cleanup); tab ids need the owner or an access admin. */
-export async function deletePendingGrant(
-  actor: Actor,
-  email: string,
-  grantId: string,
-  opts: { allowPortalAdmin?: boolean } = {},
-): Promise<ChangeResult> {
+/** Delete a pre-grant by email. Audited. Unknown ids may be deleted (cleanup); same rights as setGrants. */
+export async function deletePendingGrant(actor: Actor, email: string, grantId: string): Promise<ChangeResult> {
   if (!email || typeof email !== "string" || !grantId || typeof grantId !== "string") throw new AccessChangeError("bad_request", "email and appId are required");
-  const kind = getGrant(grantId)?.kind;
-  // an unknown id with a dot is treated like a tab (fail closed)
-  const asTab = kind === "tab" || (!kind && grantId.includes("."));
-  const auth = await authorityOf(actor);
-  const manager = auth.level === "owner" || auth.level === "access-admin";
-  if (!manager && !(auth.level === "portal-admin" && opts.allowPortalAdmin === true)) {
-    throw new AccessChangeError("forbidden", "only the owner or an access admin may change access");
-  }
-  if (!manager && asTab) throw new AccessChangeError("forbidden", "tab grants need the owner or an access admin");
+  const auth = await requireWriter(actor, [grantId]);
   const result = await prisma.$transaction(async (tx) => {
     const before = await tx.pendingAppAccess.findUnique({ where: { email_appId: { email, appId: grantId } } });
     if (!before) throw new AccessChangeError("not_found", "no such pre-grant");
@@ -366,6 +334,9 @@ export async function revertChange(actor: Actor, changeId: string, note?: string
     if (rows.some((r) => r.targetUserId.startsWith("pending:"))) throw new AccessChangeError("bad_request", "pre-grant changes cannot be reverted here");
     if (rows.some((r) => r.grantId === ACCESS_ADMIN_GRANT) && auth.level !== "owner") {
       throw new AccessChangeError("forbidden", "only the owner may revert an access admin change");
+    }
+    if (auth.level !== "owner" && rows.some((r) => getGrant(r.grantId)?.ownerOnly)) {
+      throw new AccessChangeError("forbidden", "only the owner may change this grant");
     }
     for (const targetId of new Set(rows.map((r) => r.targetUserId))) {
       const target = await tx.user.findUnique({ where: { id: targetId }, select: { id: true, discordId: true } });
