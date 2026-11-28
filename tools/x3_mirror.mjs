@@ -97,6 +97,9 @@ const newMe = (await imp(root, "app/api/me/route.ts")).GET;
 const newRedirect = (await imp(root, "app/api/auth/redirect/route.ts")).GET;
 const newApps = await imp(root, "lib/apps.ts");
 const C = await imp(root, "lib/accessChanges.ts");
+// X6: when the old checkout has the access-admin rule too (X3 and later), compare with ITS rule, not the pre-X3 one
+const oldC = existsSync(path.join(oldRoot, "lib/accessChanges.ts")) && (await imp(oldRoot, "lib/accessChanges.ts")).canManageAccess ? await imp(oldRoot, "lib/accessChanges.ts") : null;
+const oldTargetRule = !!oldC && /access-admin/.test((await import("node:fs")).readFileSync(path.join(oldRoot, "lib/accessChanges.ts"), "utf8"));
 const { isTestUser } = await imp(root, "lib/testUsers.ts");
 const { NextRequest } = await import("next/server");
 
@@ -136,7 +139,9 @@ for (const u of users) {
     counts.redirectCompared++;
     if (ra !== rb) diffs.push({ who: u.username, what: `redirect ${appId}`, from: ra, to: rb });
   }
-  const oldCan = u.isAdmin || u.discordId === owner;                                   // old /admin PATCH: any Portal admin
+  const oldCan = oldTargetRule
+    ? await oldC.canManageAccess({ discordId: u.discordId, username: u.username })   // old checkout's own rule (X3+)
+    : u.isAdmin || u.discordId === owner;                                             // old /admin PATCH: any Portal admin
   const newCan = await C.canManageAccess({ discordId: u.discordId, username: u.username });
   if (oldCan !== newCan) diffs.push({ who: u.username, what: "may change access", from: String(oldCan), to: String(newCan) });
 }
