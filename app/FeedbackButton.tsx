@@ -1,6 +1,6 @@
 "use client";
 
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 
 /**
  * "This is confusing" (plan R-3258 X6, S5): a small fixed button; one line of text goes to POST /api/feedback with the
@@ -13,6 +13,16 @@ export default function FeedbackButton({ page }: { page: "/" | "/access" }) {
   const [busy, setBusy] = useState(false);
   const [msg, setMsg] = useState<{ t: string; ok: boolean } | null>(null);
   const input = useRef<HTMLInputElement>(null);
+  // /access shows a fixed "N unsaved changes ... Save" bar at the bottom: sit above it, never on its Save button
+  const [lift, setLift] = useState(0);
+  useEffect(() => {
+    const measure = () => { const bar = document.querySelector(".ax-bar"); setLift(bar ? Math.ceil(bar.getBoundingClientRect().height) : 0); };
+    const mo = new MutationObserver(measure);
+    mo.observe(document.body, { childList: true, subtree: true });
+    window.addEventListener("resize", measure);
+    measure();
+    return () => { mo.disconnect(); window.removeEventListener("resize", measure); };
+  }, []);
   const tabName = () => (typeof document === "undefined" ? null
     : document.querySelector('[role="tab"][aria-selected="true"]')?.textContent?.trim() || null);
   const where = () => (page === "/" ? "Home" : `Access${tabName() ? `, ${tabName()}` : ""}`);
@@ -45,7 +55,7 @@ export default function FeedbackButton({ page }: { page: "/" | "/access" }) {
     <>
       {open && (
         <div role="dialog" aria-label="This is confusing" onKeyDown={(e) => { if (e.key === "Escape") setOpen(false); }}
-          style={{ position: "fixed", right: 16, bottom: 72, zIndex: 60, width: "min(380px, calc(100vw - 32px))", background: "var(--bg-elevated)",
+          style={{ position: "fixed", right: 16, bottom: 72 + lift, zIndex: 60, width: "min(380px, calc(100vw - 32px))", background: "var(--bg-elevated)",
             border: "1px solid var(--border-bright)", padding: 16, boxShadow: "0 8px 30px rgba(0,0,0,.5)" }}>
           <form onSubmit={send}>
             <label htmlFor="cf-text" style={{ display: "block", fontSize: 15, fontWeight: 600, marginBottom: 8, color: "var(--text)" }}>What was confusing?</label>
@@ -62,7 +72,7 @@ export default function FeedbackButton({ page }: { page: "/" | "/access" }) {
         </div>
       )}
       <button type="button" aria-haspopup="dialog" aria-expanded={open} onClick={() => { setOpen((o) => !o); setMsg(null); }}
-        style={{ position: "fixed", right: 16, bottom: 16, zIndex: 60, minHeight: 44, padding: "0 16px", borderRadius: 22,
+        style={{ position: "fixed", right: 16, bottom: 16 + lift, zIndex: 60, minHeight: 44, padding: "0 16px", borderRadius: 22,
           border: "1px solid var(--border-bright)", background: "var(--bg-elevated)", color: "var(--text-dim)", fontSize: 14, fontWeight: 500,
           cursor: "pointer", boxShadow: "0 2px 10px rgba(0,0,0,.4)" }}>
         This is confusing
